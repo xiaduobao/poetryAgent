@@ -4,11 +4,11 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import AsyncIterator
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from app.agent.checkpoint import get_checkpointer
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
@@ -22,6 +22,7 @@ from app.agent.prompts import (
 from app.agent.sources import build_sources_from_prepared
 from app.agent.tools import AGENT_TOOLS
 from app.observability.langsmith import get_run_config, traceable, update_run_metadata
+from app.observability.tokens import usage_from_message
 from app.rag.retriever import format_context, get_hybrid_retriever
 
 # ---------- State ----------
@@ -40,6 +41,7 @@ class PreparedAgent(TypedDict):
     state: AgentState
     intent: str
     mode: Literal["rag", "tool_summary", "chat"]
+    token_usage: NotRequired[int]
 
 
 # ---------- Nodes ----------
@@ -256,7 +258,6 @@ def should_continue_tools(state: AgentState) -> Literal["tools", "summarize"]:
 # ---------- Graph build ----------
 
 _tool_node = ToolNode(AGENT_TOOLS)
-_memory = MemorySaver()
 
 
 def _build_graph():
@@ -291,7 +292,7 @@ def _build_graph():
     g.add_edge("tools", "summarize_tools")
     g.add_edge("summarize_tools", END)
 
-    return g.compile(checkpointer=_memory)
+    return g.compile(checkpointer=get_checkpointer())
 
 
 _graph = None
@@ -436,8 +437,10 @@ async def stream_final_answer(prepared: PreparedAgent) -> AsyncIterator[str]:
     config = get_run_config(step="stream_final_answer", mode=mode)
     start = time.perf_counter()
     first_token = True
+    token_usage = 0
 
     async for chunk in llm.astream(messages, config=config):
+        token_usage = max(token_usage, usage_from_message(chunk))
         content = chunk.content
         if first_token:
             ttft_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -454,9 +457,13 @@ async def stream_final_answer(prepared: PreparedAgent) -> AsyncIterator[str]:
                     if text:
                         yield text
 
+    if token_usage:
+        prepared["token_usage"] = token_usage
+        update_run_metadata(token_usage=token_usage, mode=mode)
+
 
 @traceable(run_type="llm", name="collect_stream")
-def _collect_stream(prepared: PreparedAgent) -> str:
+def _collect_stream(prepared: PreparedAgent) -> tuple[str, int]:
     llm = get_llm()
     messages = _build_stream_messages(prepared)
     mode = prepared["mode"]
@@ -464,8 +471,12 @@ def _collect_stream(prepared: PreparedAgent) -> str:
         messages,
         config=get_run_config(step="collect_stream", mode=mode),
     )
-    update_run_metadata(mode=mode)
-    return resp.content if hasattr(resp, "content") else str(resp)
+    tokens = usage_from_message(resp)
+    if tokens:
+        prepared["token_usage"] = tokens
+    update_run_metadata(mode=mode, token_usage=tokens)
+    content = resp.content if hasattr(resp, "content") else str(resp)
+    return content, tokens
 
 
 def commit_agent_state(
@@ -495,13 +506,19 @@ def commit_agent_state(
 
 
 def clear_thread_checkpoint(thread_id: str) -> None:
-    """清除指定 thread 的内存 checkpoint。"""
-    checkpointer = get_agent_graph().checkpointer
-    if not hasattr(checkpointer, "storage"):
-        return
-    keys = [k for k in checkpointer.storage if k[0] == thread_id]
-    for key in keys:
-        del checkpointer.storage[key]
+    """同步包装：清除指定 thread 的 checkpoint。"""
+    import asyncio
+
+    from app.agent.checkpoint import clear_thread_checkpoint as _clear
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(_clear(thread_id))
+        else:
+            loop.run_until_complete(_clear(thread_id))
+    except RuntimeError:
+        asyncio.run(_clear(thread_id))
 
 
 def run_agent(
@@ -510,7 +527,7 @@ def run_agent(
     filters: dict | None = None,
 ) -> dict:
     prepared = prepare_agent(message, thread_id=thread_id, filters=filters)
-    answer = _collect_stream(prepared)
+    answer, tokens_used = _collect_stream(prepared)
     commit_agent_state(thread_id, message, answer, prepared)
     state = prepared["state"]
     return {
@@ -519,6 +536,7 @@ def run_agent(
         "rag_context": state.get("rag_context", ""),
         "tool_result": state.get("tool_result", ""),
         "sources": build_sources_from_prepared(prepared),
+        "tokens_used": tokens_used,
     }
 
 

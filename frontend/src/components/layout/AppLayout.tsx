@@ -1,13 +1,15 @@
 import { useState } from "react"
-import { Menu, Moon, Sun } from "lucide-react"
+import { LogOut, Menu, Moon, Sun } from "lucide-react"
 import { SessionSidebar } from "@/components/sidebar/SessionSidebar"
 import { MessageList } from "@/components/chat/MessageList"
 import { ChatInput } from "@/components/chat/ChatInput"
 import { Button } from "@/components/ui/button"
 import { useSessions } from "@/hooks/useSessions"
 import { useChatStream } from "@/hooks/useChatStream"
+import { useAuth } from "@/hooks/useAuth"
 
 export function AppLayout() {
+  const { user, logout } = useAuth()
   const {
     sessions,
     loading,
@@ -129,7 +131,15 @@ export function AppLayout() {
           <h1 className="truncate text-sm font-semibold">
             {sessions.find((s) => s.id === activeId)?.title || "古典诗词鉴赏助手"}
           </h1>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-1">
+            {user && (
+              <span className="mr-2 hidden text-xs text-muted-foreground sm:inline">
+                {user.email} · {user.plan}
+              </span>
+            )}
+            <Button variant="ghost" size="icon" onClick={() => logout()} title="退出登录">
+              <LogOut className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={toggleTheme}>
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>

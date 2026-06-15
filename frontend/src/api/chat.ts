@@ -1,3 +1,4 @@
+import { clearTokens, getValidToken, refreshAccessToken } from "./client"
 import type { SourceRef, StreamPhase } from "../types"
 
 export interface StreamCallbacks {
@@ -18,6 +19,41 @@ export interface StreamHandle {
   promise: Promise<void>
 }
 
+async function fetchStream(
+  sessionId: string | null,
+  message: string,
+  callbacks: StreamCallbacks,
+  signal: AbortSignal,
+  retry = true,
+): Promise<Response | null> {
+  const token = await getValidToken()
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const res = await fetch("/api/v1/chat/stream", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      thread_id: sessionId || "default",
+    }),
+    signal,
+  })
+
+  if (res.status === 401 && retry) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      return fetchStream(sessionId, message, callbacks, signal, false)
+    }
+    clearTokens()
+    callbacks.onError?.("登录已过期，请重新登录")
+    return null
+  }
+
+  return res
+}
+
 export function streamChat(
   sessionId: string | null,
   message: string,
@@ -30,20 +66,16 @@ export function streamChat(
     : controller.signal
 
   const promise = (async () => {
-    const res = await fetch("/api/v1/chat/stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        session_id: sessionId,
-        thread_id: sessionId || "default",
-      }),
-      signal: combinedSignal,
-    })
+    const res = await fetchStream(sessionId, message, callbacks, combinedSignal)
+    if (!res) return
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }))
-      callbacks.onError?.(err.detail || `HTTP ${res.status}`)
+      const message =
+        err.detail ||
+        err.error ||
+        (res.status === 429 ? "请求过于频繁，请稍后再试" : `HTTP ${res.status}`)
+      callbacks.onError?.(message)
       return
     }
 

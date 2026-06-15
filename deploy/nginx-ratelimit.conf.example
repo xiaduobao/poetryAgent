@@ -1,0 +1,50 @@
+# 网关层限流示例（Nginx + limit_req）
+# 将本文件 include 到 server {} 中，并 proxy_pass 到 uvicorn。
+#
+# 优点：在请求进入 Python 前拦截，节省应用资源；可多服务统一限流。
+# 缺点：无法按业务意图（如 session）细粒度限流，需配合应用层 slowapi。
+
+limit_req_zone $binary_remote_addr zone=chat_limit:10m rate=15r/m;
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=120r/m;
+
+server {
+    listen 80;
+    server_name poetry-agent.example.com;
+
+    location /api/v1/chat {
+        limit_req zone=chat_limit burst=3 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering off;
+    }
+
+    location /api/v1/chat/stream {
+        limit_req zone=chat_limit burst=2 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    location /api/ {
+        limit_req zone=api_limit burst=20 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

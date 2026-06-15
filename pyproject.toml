@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+asyncio_mode = auto
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+omit = ["app/agent/graph.py", "app/rag/*", "scripts/*"]

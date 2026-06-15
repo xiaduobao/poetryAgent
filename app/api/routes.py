@@ -3,8 +3,9 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.graph import (
     commit_agent_state,
@@ -12,6 +13,7 @@ from app.agent.graph import (
     run_agent,
     stream_final_answer,
 )
+from app.agent.sources import build_sources_from_prepared
 from app.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -25,9 +27,14 @@ from app.api.schemas import (
     ToolThemeRequest,
     ToolWritingRequest,
 )
-from app.agent.sources import build_sources_from_prepared
+from app.auth.dependencies import get_current_user
+from app.auth.quota import require_chat_quota, require_rag_quota
+from app.config import get_settings
 from app.db import crud
-from app.db.database import get_session_factory
+from app.db.audit import log_audit
+from app.db.database import get_db, get_session_factory
+from app.db.models import User
+from app.observability.health import readiness_report
 from app.observability.langsmith import (
     trace_metadata,
     trace_session,
@@ -35,10 +42,13 @@ from app.observability.langsmith import (
     truncate_input,
     update_run_metadata,
 )
+from app.observability.metrics import RAG_EMPTY
+from app.observability.tokens import record_llm_tokens
 from app.rag.retriever import get_hybrid_retriever
-from app.security.filter import sanitize_input
-from app.tools.author import query_author
+from app.security.filter import sanitize_input_async, wrap_user_input
+from app.security.rate_limit import limiter
 from app.tools.allusion import explain_allusion
+from app.tools.author import query_author
 from app.tools.compare import compare_styles
 from app.tools.meter import analyze_meter
 from app.tools.poem_lookup import lookup_poem
@@ -47,6 +57,14 @@ from app.tools.writing import writing_guide
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _trace_ctx(request: Request, user: User) -> dict:
+    return trace_metadata(
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 def _resolve_thread_id(req: ChatRequest) -> str:
@@ -84,18 +102,11 @@ def _traced_run_agent(
     message: str,
     thread_id: str,
     filters: dict,
+    meta: dict,
 ) -> dict:
-    update_run_metadata(
-        **trace_metadata(
-            session_id=thread_id,
-            stream=False,
-            endpoint="/api/v1/chat",
-            filters=filters or None,
-            message_preview=truncate_input(message),
-        )
-    )
+    update_run_metadata(**meta, session_id=thread_id, stream=False, endpoint="/api/v1/chat", filters=filters or None, message_preview=truncate_input(message))
     with trace_session(thread_id):
-        return run_agent(message, thread_id=thread_id, filters=filters)
+        return run_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
 
 
 @traceable(run_type="chain", name="chat_request")
@@ -103,57 +114,66 @@ async def _traced_stream_chat(
     message: str,
     thread_id: str,
     filters: dict,
+    meta: dict,
 ) -> AsyncIterator[tuple[str, object]]:
-    """在单个根 Run 内完成 prepare + stream，通过事件元组向外传递。"""
-    update_run_metadata(
-        **trace_metadata(
-            session_id=thread_id,
-            stream=True,
-            endpoint="/api/v1/chat/stream",
-            filters=filters or None,
-            message_preview=truncate_input(message),
-        )
-    )
+    update_run_metadata(**meta, session_id=thread_id, stream=True, endpoint="/api/v1/chat/stream", filters=filters or None, message_preview=truncate_input(message))
     with trace_session(thread_id):
-        prepared = prepare_agent(message, thread_id=thread_id, filters=filters)
+        prepared = prepare_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
         yield ("prepared", prepared)
         async for token in stream_final_answer(prepared):
             yield ("token", token)
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
-    """多轮对话 Agent 入口（非流式）。"""
-    text, err = sanitize_input(req.message)
+@limiter.limit(lambda: get_settings().rate_limit_chat)
+async def chat(
+    request: Request,
+    req: ChatRequest,
+    user: User = Depends(require_chat_quota),
+    db: AsyncSession = Depends(get_db),
+) -> ChatResponse:
+    text, err = await sanitize_input_async(req.message)
     if err:
         raise HTTPException(status_code=400, detail=err)
 
     thread_id = _resolve_thread_id(req)
     filters = _build_filters(req)
+    meta = _trace_ctx(request, user)
 
-    factory = get_session_factory()
-    async with factory() as db:
-        session = await crud.get_session(db, thread_id)
-        if not session:
-            session = await crud.create_session(db, title="新对话")
-            thread_id = session.id
-        await crud.add_message(db, thread_id, "user", text)
-        await crud.auto_title_from_message(db, thread_id, text)
-        await db.commit()
+    session = await crud.get_session(db, thread_id, user_id=user.id)
+    if not session:
+        if thread_id not in ("default", ""):
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+        session = await crud.create_session(db, user.id, title="新对话")
+        thread_id = session.id
+
+    await crud.add_message(db, thread_id, user.id, "user", text)
+    await crud.auto_title_from_message(db, thread_id, user.id, text)
+    await db.commit()
 
     try:
-        result = _traced_run_agent(text, thread_id, filters)
+        result = _traced_run_agent(text, thread_id, filters, meta)
     except Exception as e:
         logger.exception("agent error")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    async with factory() as db:
+    tokens_used = int(result.get("tokens_used") or 0)
+    factory = get_session_factory()
+    async with factory() as db2:
         await crud.add_message(
-            db, thread_id, "assistant", result["answer"],
+            db2, thread_id, user.id, "assistant", result["answer"],
             intent=result.get("intent"),
             sources=result.get("sources"),
         )
-        await db.commit()
+        await crud.record_usage(
+            db2,
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            action="chat",
+            tokens=tokens_used,
+        )
+        record_llm_tokens("chat", tokens_used)
+        await db2.commit()
 
     preview = (result.get("rag_context") or "")[:500] or None
     return ChatResponse(
@@ -166,25 +186,32 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
 
 @router.post("/chat/stream")
-async def chat_stream(req: ChatRequest) -> StreamingResponse:
-    """SSE 流式对话。"""
-    text, err = sanitize_input(req.message)
+@limiter.limit(lambda: get_settings().rate_limit_chat)
+async def chat_stream(
+    request: Request,
+    req: ChatRequest,
+    user: User = Depends(require_chat_quota),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    text, err = await sanitize_input_async(req.message)
     if err:
         raise HTTPException(status_code=400, detail=err)
 
     thread_id = _resolve_thread_id(req)
     filters = _build_filters(req)
+    meta = _trace_ctx(request, user)
 
-    factory = get_session_factory()
-    async with factory() as db:
-        session = await crud.get_session(db, thread_id)
-        if not session:
-            session = await crud.create_session(db, title="新对话")
-            thread_id = session.id
-        user_msg = await crud.add_message(db, thread_id, "user", text)
-        await crud.auto_title_from_message(db, thread_id, text)
-        await db.commit()
-        user_msg_id = user_msg.id if user_msg else ""
+    session = await crud.get_session(db, thread_id, user_id=user.id)
+    if not session:
+        if thread_id not in ("default", ""):
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+        session = await crud.create_session(db, user.id, title="新对话")
+        thread_id = session.id
+
+    user_msg = await crud.add_message(db, thread_id, user.id, "user", text)
+    await crud.auto_title_from_message(db, thread_id, user.id, text)
+    await db.commit()
+    user_msg_id = user_msg.id if user_msg else ""
 
     async def event_generator() -> AsyncIterator[str]:
         full_answer = ""
@@ -194,15 +221,12 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         prepared = None
         try:
             yield _sse("status", {"phase": "classifying"})
-            async for kind, value in _traced_stream_chat(text, thread_id, filters):
+            async for kind, value in _traced_stream_chat(text, thread_id, filters, meta):
                 if kind == "prepared":
                     prepared = value
                     intent = prepared["intent"]
                     sources = build_sources_from_prepared(prepared)
-                    yield _sse(
-                        "status",
-                        {"phase": _status_phase(prepared["mode"], intent)},
-                    )
+                    yield _sse("status", {"phase": _status_phase(prepared["mode"], intent)})
                     if sources:
                         yield _sse("sources", {"sources": sources})
                     yield _sse("status", {"phase": "generating"})
@@ -216,28 +240,31 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 
             commit_agent_state(thread_id, text, full_answer, prepared)
 
-            async with factory() as db:
+            factory = get_session_factory()
+            async with factory() as db2:
                 msg = await crud.add_message(
-                    db,
-                    thread_id,
-                    "assistant",
-                    full_answer,
-                    intent=intent,
-                    sources=sources or None,
+                    db2, thread_id, user.id, "assistant", full_answer,
+                    intent=intent, sources=sources or None,
                 )
-                await db.commit()
+                tokens_used = int((prepared or {}).get("token_usage") or 0)
+                await crud.record_usage(
+                    db2,
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    action="chat",
+                    tokens=tokens_used,
+                )
+                record_llm_tokens("chat", tokens_used)
+                await db2.commit()
                 assistant_msg_id = msg.id if msg else ""
 
-            yield _sse(
-                "done",
-                {
-                    "session_id": thread_id,
-                    "intent": intent,
-                    "message_id": assistant_msg_id,
-                    "user_message_id": user_msg_id,
-                    "sources": sources,
-                },
-            )
+            yield _sse("done", {
+                "session_id": thread_id,
+                "intent": intent,
+                "message_id": assistant_msg_id,
+                "user_message_id": user_msg_id,
+                "sources": sources,
+            })
         except Exception as e:
             logger.exception("stream agent error")
             yield _sse("error", {"detail": str(e)})
@@ -261,136 +288,98 @@ def _traced_rag_search(
     dynasty: str | None = None,
     genre: str | None = None,
     top_k: int = 4,
+    meta: dict | None = None,
 ) -> list:
-    filters = {
-        k: v
-        for k, v in {
-            "author": author,
-            "dynasty": dynasty,
-            "genre": genre,
-        }.items()
-        if v
-    }
-    update_run_metadata(
-        **trace_metadata(
-            endpoint="/api/v1/rag",
-            filters=filters or None,
-            query_preview=truncate_input(query),
-        )
-    )
+    filters = {k: v for k, v in {"author": author, "dynasty": dynasty, "genre": genre}.items() if v}
+    update_run_metadata(**(meta or {}), endpoint="/api/v1/rag", filters=filters or None, query_preview=truncate_input(query))
     retriever = get_hybrid_retriever()
-    return retriever.retrieve(
-        query,
-        author=author,
-        dynasty=dynasty,
-        genre=genre,
-    )[:top_k]
+    docs = retriever.retrieve(query, author=author, dynasty=dynasty, genre=genre)[:top_k]
+    if not docs:
+        RAG_EMPTY.inc()
+    return docs
 
 
 @router.post("/rag", response_model=RAGResponse)
-async def rag_search(req: RAGRequest) -> RAGResponse:
-    """纯 RAG 检索接口。"""
-    text, err = sanitize_input(req.query)
+@limiter.limit(lambda: get_settings().rate_limit_rag)
+async def rag_search(
+    request: Request,
+    req: RAGRequest,
+    user: User = Depends(require_rag_quota),
+    db: AsyncSession = Depends(get_db),
+) -> RAGResponse:
+    text, err = await sanitize_input_async(req.query)
     if err:
         raise HTTPException(status_code=400, detail=err)
+
+    sub = await crud.get_subscription(db, user.tenant_id)
+    top_k = min(req.top_k, sub.rag_top_k if sub else req.top_k)
 
     docs = _traced_rag_search(
         text,
         author=req.author,
         dynasty=req.dynasty,
         genre=req.genre,
-        top_k=req.top_k,
+        top_k=top_k,
+        meta=_trace_ctx(request, user),
     )
+    await crud.record_usage(db, tenant_id=user.tenant_id, user_id=user.id, action="rag")
 
     return RAGResponse(
         query=text,
-        documents=[
-            {
-                "content": d.page_content[:1500],
-                "metadata": d.metadata,
-            }
-            for d in docs
-        ],
+        documents=[{"content": d.page_content[:1500], "metadata": d.metadata} for d in docs],
     )
 
 
-@traceable(run_type="tool", name="tool_author")
-def _traced_tool_author(name: str) -> dict:
-    update_run_metadata(**trace_metadata(endpoint="/api/v1/tools/author"))
-    return query_author(name)
-
-
-@traceable(run_type="tool", name="tool_meter")
-def _traced_tool_meter(title: str, content: str) -> dict:
-    update_run_metadata(**trace_metadata(endpoint="/api/v1/tools/meter"))
-    return analyze_meter(title, content)
-
-
-@traceable(run_type="tool", name="tool_compare")
-def _traced_tool_compare(author_a: str, author_b: str) -> dict:
-    update_run_metadata(**trace_metadata(endpoint="/api/v1/tools/compare"))
-    return compare_styles(author_a, author_b)
-
-
 @router.post("/tools/author")
-async def tool_author(req: ToolAuthorRequest):
-    return _traced_tool_author(req.name)
+@limiter.limit(lambda: get_settings().rate_limit_default)
+async def tool_author(request: Request, req: ToolAuthorRequest, user: User = Depends(get_current_user)):
+    return query_author(req.name)
 
 
 @router.post("/tools/meter")
-async def tool_meter(req: ToolMeterRequest):
-    return _traced_tool_meter(req.title, req.content)
+@limiter.limit(lambda: get_settings().rate_limit_default)
+async def tool_meter(request: Request, req: ToolMeterRequest, user: User = Depends(get_current_user)):
+    return analyze_meter(req.title, req.content)
 
 
 @router.post("/tools/compare")
-async def tool_compare(req: ToolCompareRequest):
-    return _traced_tool_compare(req.author_a, req.author_b)
-
-
-@traceable(run_type="tool", name="tool_poem")
-def _traced_tool_poem(title: str, author: str) -> dict:
-    update_run_metadata(**trace_metadata(endpoint="/api/v1/tools/poem"))
-    return lookup_poem(title, author)
-
-
-@traceable(run_type="tool", name="tool_theme")
-def _traced_tool_theme(theme: str, limit: int) -> dict:
-    update_run_metadata(**trace_metadata(endpoint="/api/v1/tools/theme"))
-    return recommend_by_theme(theme, limit=limit)
-
-
-@traceable(run_type="tool", name="tool_allusion")
-def _traced_tool_allusion(query: str) -> dict:
-    update_run_metadata(**trace_metadata(endpoint="/api/v1/tools/allusion"))
-    return explain_allusion(query)
-
-
-@traceable(run_type="tool", name="tool_writing")
-def _traced_tool_writing(writing_type: str, theme: str, constraints: str) -> dict:
-    update_run_metadata(**trace_metadata(endpoint="/api/v1/tools/writing"))
-    return writing_guide(writing_type, theme, constraints)
+@limiter.limit(lambda: get_settings().rate_limit_default)
+async def tool_compare(request: Request, req: ToolCompareRequest, user: User = Depends(get_current_user)):
+    return compare_styles(req.author_a, req.author_b)
 
 
 @router.post("/tools/poem")
-async def tool_poem(req: ToolPoemRequest):
-    return _traced_tool_poem(req.title, req.author)
+@limiter.limit(lambda: get_settings().rate_limit_default)
+async def tool_poem(request: Request, req: ToolPoemRequest, user: User = Depends(get_current_user)):
+    return lookup_poem(req.title, req.author)
 
 
 @router.post("/tools/theme")
-async def tool_theme(req: ToolThemeRequest):
-    return _traced_tool_theme(req.theme, req.limit)
+@limiter.limit(lambda: get_settings().rate_limit_default)
+async def tool_theme(request: Request, req: ToolThemeRequest, user: User = Depends(get_current_user)):
+    return recommend_by_theme(req.theme, limit=req.limit)
 
 
 @router.post("/tools/allusion")
-async def tool_allusion(req: ToolAllusionRequest):
-    return _traced_tool_allusion(req.query)
+@limiter.limit(lambda: get_settings().rate_limit_default)
+async def tool_allusion(request: Request, req: ToolAllusionRequest, user: User = Depends(get_current_user)):
+    return explain_allusion(req.query)
 
 
 @router.post("/tools/writing")
-async def tool_writing(req: ToolWritingRequest):
-    return _traced_tool_writing(req.writing_type, req.theme, req.constraints)
+@limiter.limit(lambda: get_settings().rate_limit_default)
+async def tool_writing(request: Request, req: ToolWritingRequest, user: User = Depends(get_current_user)):
+    return writing_guide(req.writing_type, req.theme, req.constraints)
 
 
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "poetry-agent"}
+
+
+@router.get("/health/ready")
+async def health_ready():
+    report = await readiness_report()
+    if report["status"] != "ready":
+        raise HTTPException(status_code=503, detail=report)
+    return report

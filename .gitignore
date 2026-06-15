@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 venv/
 data/chroma_db/
+data/postgres/
+data/redis/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
@@ -14,3 +16,4 @@ models/
 frontend/node_modules/
 frontend/dist/
 data/sessions.db
+scripts/deploy/deploy.env
