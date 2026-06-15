@@ -57,7 +57,3 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 pytest-cov>=4.1.0
 ruff>=0.4.0
-
-# RAG 评估（Ragas，离线脚本 scripts/eval_rag_ragas.py）
-ragas>=0.2.0
-datasets>=2.14.0

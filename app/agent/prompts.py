@@ -52,6 +52,35 @@ STRUCTURED_OUTPUT_HINT = """
 ```
 """
 
+WRITING_OUTPUT_HINT = """
+## 创作输出要求（必须遵守）
+1. 正文须先完整呈现诗作全文：按工具返回的 rules.line_count 与 rules.chars_per_line，每句单独一行。
+2. JSON 块中：
+   - `lines`：必填，字符串数组，长度必须等于 rules.line_count；每项仅含该句汉字（不含逗号、句号）。
+   - `famous_lines`：可选，从 lines 中摘 1～2 句名句；每项一句，禁止将多句合并为一个字符串。
+3. 禁止只输出 famous_lines 而省略完整 lines。
+
+```json
+{{
+  "title": "诗题",
+  "author": "作者",
+  "dynasty": "朝代",
+  "genre": "体裁",
+  "theme": "主旨",
+  "lines": ["第一句", "第二句", "第三句", "第四句"],
+  "famous_lines": ["可选名句"],
+  "appreciation": "鉴赏要点摘要"
+}}
+```
+"""
+
+
+def structured_output_hint(intent: str = "") -> str:
+    """按意图返回结构化输出提示；创作类使用 WRITING_OUTPUT_HINT。"""
+    if intent == "tool_writing":
+        return WRITING_OUTPUT_HINT
+    return STRUCTURED_OUTPUT_HINT
+
 INTENT_CLASSIFIER_PROMPT = """判断用户意图，只输出一个词：
 - rag：诗词鉴赏、赏析、查询某首诗的内容/注释/译文（深度赏析类）
 - tool_author：查询作者生平、代表作、风格

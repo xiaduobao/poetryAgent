@@ -93,6 +93,23 @@ def _normalize_type(writing_type: str) -> str:
     return t
 
 
+def _build_output_requirements(rules: dict[str, Any]) -> str:
+    """将格律规则转为 LLM 可执行的输出约束说明。"""
+    line_count = rules.get("line_count")
+    chars_per_line = rules.get("chars_per_line")
+    rhyme = rules.get("rhyme", "")
+
+    if isinstance(line_count, int) and isinstance(chars_per_line, int):
+        return (
+            f"须输出完整 {line_count} 句，每句 {chars_per_line} 字；"
+            f"JSON 的 lines 数组必须恰好包含 {line_count} 个字符串，"
+            f"每项仅该句汉字（{rhyme or '按体裁押韵'}）。"
+        )
+    if line_count == 2:
+        return "须输出上下联各一句，JSON 的 lines 数组必须恰好 2 项。"
+    return "须按体裁输出完整作品，JSON 的 lines 数组须覆盖全部句子。"
+
+
 def _find_references(writing_type: str, theme: str, limit: int = 3) -> list[dict[str, str]]:
     norm = _normalize_type(writing_type)
     refs: list[dict[str, str]] = []
@@ -166,17 +183,20 @@ def writing_guide(
     if constraints:
         checklist.append(f"用户约束：{constraints}")
 
+    rule_payload = {
+        "line_count": rules.get("line_count"),
+        "chars_per_line": rules.get("chars_per_line"),
+        "rhyme": rules.get("rhyme"),
+    }
+
     return {
         "found": True,
         "writing_type": norm_type,
         "theme": theme,
         "constraints": constraints,
-        "rules": {
-            "line_count": rules.get("line_count"),
-            "chars_per_line": rules.get("chars_per_line"),
-            "rhyme": rules.get("rhyme"),
-        },
+        "rules": rule_payload,
+        "output_requirements": _build_output_requirements(rules),
         "checklist": checklist,
         "references": references,
-        "note": "工具提供格律指南与参考，具体诗作由助手根据以上信息创作。",
+        "note": "工具提供格律指南与参考；助手须按 output_requirements 输出完整 lines，不得仅写名句。",
     }

@@ -16,8 +16,8 @@ from app.agent.llm import get_llm
 from app.agent.prompts import (
     INTENT_CLASSIFIER_PROMPT,
     RAG_PROMPT,
-    STRUCTURED_OUTPUT_HINT,
     SYSTEM_PROMPT,
+    structured_output_hint,
 )
 from app.agent.sources import build_sources_from_prepared
 from app.agent.tools import AGENT_TOOLS
@@ -164,7 +164,7 @@ def generate_rag_answer(state: AgentState) -> AgentState:
     )
     resp = llm.invoke(
         [
-            SystemMessage(content=SYSTEM_PROMPT + STRUCTURED_OUTPUT_HINT),
+            SystemMessage(content=SYSTEM_PROMPT + structured_output_hint("rag")),
             HumanMessage(content=prompt),
         ]
     )
@@ -207,18 +207,28 @@ def prepare_tool_call(state: AgentState) -> AgentState:
     return {**state, "messages": [resp]}
 
 
+def _tool_summary_user_content(intent: str, tool_text: str) -> str:
+    base = f"工具返回结果：\n{tool_text}\n\n请整理为中文回答，并引用工具中的事实。"
+    if intent == "tool_writing":
+        return (
+            f"{base}\n\n"
+            "这是诗词创作任务：须按工具 rules 与 output_requirements 先写出完整诗作"
+            "（每句一行），再在 JSON 中用 lines 数组列出全部句子。"
+        )
+    return base
+
+
 def generate_tool_summary(state: AgentState) -> AgentState:
     """工具执行后，由 LLM 整理为自然语言回答。"""
     llm = get_llm()
+    intent = state.get("intent", "chat")
     tool_msgs = [m for m in state["messages"] if m.type == "tool"]
     tool_text = "\n".join(getattr(m, "content", str(m)) for m in tool_msgs)
 
     resp = llm.invoke(
         [
-            SystemMessage(content=SYSTEM_PROMPT + STRUCTURED_OUTPUT_HINT),
-            HumanMessage(
-                content=f"工具返回结果：\n{tool_text}\n\n请整理为中文回答，并引用工具中的事实。"
-            ),
+            SystemMessage(content=SYSTEM_PROMPT + structured_output_hint(intent)),
+            HumanMessage(content=_tool_summary_user_content(intent, tool_text)),
         ]
     )
     return {
@@ -412,17 +422,16 @@ def _build_stream_messages(prepared: PreparedAgent) -> list[BaseMessage]:
             question=_last_user_text(state),
         )
         return [
-            SystemMessage(content=SYSTEM_PROMPT + STRUCTURED_OUTPUT_HINT),
+            SystemMessage(content=SYSTEM_PROMPT + structured_output_hint("rag")),
             HumanMessage(content=prompt),
         ]
 
     if mode == "tool_summary":
+        intent = prepared.get("intent", "chat")
         tool_text = state.get("tool_result") or ""
         return [
-            SystemMessage(content=SYSTEM_PROMPT + STRUCTURED_OUTPUT_HINT),
-            HumanMessage(
-                content=f"工具返回结果：\n{tool_text}\n\n请整理为中文回答，并引用工具中的事实。"
-            ),
+            SystemMessage(content=SYSTEM_PROMPT + structured_output_hint(intent)),
+            HumanMessage(content=_tool_summary_user_content(intent, tool_text)),
         ]
 
     return [SystemMessage(content=SYSTEM_PROMPT), *state["messages"][-8:]]

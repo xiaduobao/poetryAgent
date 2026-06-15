@@ -62,12 +62,34 @@ FastAPI (/api/v1/chat/stream)
 
 ```bash
 cd poetryAgent
-python3.11 -m venv .venv   # 或 python3.12
+python3.11 -m venv .venv   # 必须用 3.11/3.12，勿用系统默认 python3（可能是 3.13）
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+python --version            # 应显示 3.11.x 或 3.12.x
+
+# 国内网络建议加镜像与更长超时（torch 包较大）
+pip install -r requirements.txt \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple \
+  --default-timeout=120
+
 cp .env.example .env
 # 编辑 .env，填入 DashScope API Key（OPENAI_API_KEY）
 # 可选模型：qwen-turbo / qwen-plus / qwen-max
+```
+
+#### 依赖安装失败排查
+
+| 报错 | 原因 | 处理 |
+|------|------|------|
+| `No matching distribution found for torch` | 使用了 **Python 3.13** | 删除旧 venv，用 `python3.11 -m venv .venv` 重建 |
+| `Read timed out` / 连接 pypi.org 超时 | 网络慢或需镜像 | 加 `-i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=120` |
+| `Requires-Python <3.13` | 同上，3.13 不兼容 | 切换到 3.11/3.12 |
+
+```bash
+# 一键重建环境（推荐）
+rm -rf .venv
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=120
 ```
 
 ### 2. 构建向量库
@@ -158,9 +180,10 @@ python scripts/eval_rag.py --golden tests/eval/rag_golden_set.json
 **Ragas 全链路评估**（检索 + 生成 + 多维度指标，需 `OPENAI_API_KEY`）：
 
 ```bash
-pip install ragas datasets   # 已写入 requirements.txt
+pip install -r requirements-eval.txt \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=120
 python scripts/eval_rag_ragas.py
-    python scripts/eval_rag_ragas.py --retrieval-only          # 仅评检索（ContextRecall）
+python scripts/eval_rag_ragas.py --retrieval-only   # 仅评检索（ContextRecall）
 python scripts/eval_rag_ragas.py --output reports/ragas.json
 ```
 
