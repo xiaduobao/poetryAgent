@@ -1,0 +1,32 @@
+# Python: 3.11 或 3.12（3.13 暂无 PyTorch wheel，会导致 sentence-transformers 安装失败）
+# Core
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# LangChain / LangGraph
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-community>=0.3.0
+langchain-chroma>=0.1.4
+langchain-huggingface>=0.1.0
+langgraph>=0.2.0
+
+# RAG（Embedding / Rerank 依赖 PyTorch）
+# PyTorch 2.2.x 预编译包基于 NumPy 1.x，勿升级到 NumPy 2
+numpy>=1.26.0,<2
+torch>=2.0.0,<3.0.0
+chromadb>=0.5.0
+sentence-transformers>=2.3.0
+rank-bm25>=0.2.2
+FlagEmbedding>=1.2.0
+
+# LLM (OpenAI-compatible API)
+langchain-openai>=0.2.0
+
+# Utils
+httpx>=0.26.0
+tiktoken>=0.5.0

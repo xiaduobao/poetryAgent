@@ -1,0 +1,13 @@
+.env
+.idea
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+data/chroma_db/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+models/
+.python-version
