@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
+import { getFollowUpSuggestions } from "@/lib/promptExamples"
 import { LogOut, Menu, Moon, Sun } from "lucide-react"
 import { SessionSidebar } from "@/components/sidebar/SessionSidebar"
 import { MessageList } from "@/components/chat/MessageList"
@@ -67,6 +68,14 @@ export function AppLayout() {
     }
   }
 
+  const followUpSuggestions = useMemo(
+    () =>
+      messages.length > 0 && !streaming
+        ? getFollowUpSuggestions(messages)
+        : [],
+    [messages, streaming],
+  )
+
   const handleSend = async (text: string) => {
     let sessionId = activeId
     if (!sessionId) {
@@ -134,7 +143,7 @@ export function AppLayout() {
           <div className="ml-auto flex items-center gap-1">
             {user && (
               <span className="mr-2 hidden text-xs text-muted-foreground sm:inline">
-                {user.email} · {user.plan}
+                {user.is_guest ? "游客" : user.email} · {user.plan}
               </span>
             )}
             <Button variant="ghost" size="icon" onClick={() => logout()} title="退出登录">
@@ -145,6 +154,12 @@ export function AppLayout() {
             </Button>
           </div>
         </header>
+
+        {user?.is_guest && (
+          <div className="border-b bg-muted/40 px-4 py-2 text-center text-xs text-muted-foreground">
+            当前为游客模式，注册登录后可保存更多对话并提升每日额度
+          </div>
+        )}
 
         <MessageList
           messages={messages}
@@ -162,6 +177,7 @@ export function AppLayout() {
           onStop={stop}
           streaming={streaming}
           maxLength={maxLength}
+          suggestions={followUpSuggestions}
         />
       </main>
     </div>

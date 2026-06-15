@@ -24,12 +24,18 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class GuestTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
 class UserOut(BaseModel):
     id: str
     email: str
     role: str
     tenant_id: str
     plan: str
+    is_guest: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

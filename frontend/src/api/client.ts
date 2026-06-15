@@ -2,8 +2,11 @@ import {
   clearTokens,
   getAccessToken,
   getRefreshToken,
+  isGuestSession,
+  setGuestToken,
   setTokens,
   type AuthUser,
+  type GuestToken,
   type TokenPair,
 } from "./auth-storage"
 
@@ -12,6 +15,7 @@ const API_BASE = "/api/v1"
 let refreshPromise: Promise<string | null> | null = null
 
 export async function refreshAccessToken(): Promise<string | null> {
+  if (isGuestSession()) return null
   const refresh = getRefreshToken()
   if (!refresh) return null
   const res = await fetch(`${API_BASE}/auth/refresh`, {
@@ -31,6 +35,7 @@ export async function refreshAccessToken(): Promise<string | null> {
 async function getValidToken(): Promise<string | null> {
   const token = getAccessToken()
   if (token) return token
+  if (isGuestSession()) return null
   if (!refreshPromise) {
     refreshPromise = refreshAccessToken().finally(() => {
       refreshPromise = null
@@ -56,6 +61,11 @@ export async function request<T>(
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
 
   if (res.status === 401 && retry) {
+    if (isGuestSession()) {
+      clearTokens()
+      window.location.reload()
+      throw new Error("游客会话已过期，请重新进入或注册登录")
+    }
     const newToken = await refreshAccessToken()
     if (newToken) {
       return request<T>(path, options, false)
@@ -115,6 +125,18 @@ export const authApi = {
   },
 
   me: () => request<AuthUser>("/auth/me"),
+
+  guest: async () => {
+    const res = await fetch(`${API_BASE}/auth/guest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(typeof err.detail === "string" ? err.detail : "游客访问失败")
+    }
+    return res.json() as Promise<GuestToken>
+  },
 }
 
 export const api = {
@@ -142,5 +164,12 @@ export const api = {
     request<void>(`/sessions/${id}`, { method: "DELETE" }),
 }
 
-export type { AuthUser, TokenPair } from "./auth-storage"
-export { getAccessToken, getValidToken, clearTokens, setTokens }
+export type { AuthUser, GuestToken, TokenPair } from "./auth-storage"
+export {
+  getAccessToken,
+  getValidToken,
+  clearTokens,
+  setTokens,
+  setGuestToken,
+  isGuestSession,
+}

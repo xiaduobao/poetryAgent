@@ -1,4 +1,5 @@
 import { clearTokens, getValidToken, refreshAccessToken } from "./client"
+import { isGuestSession } from "./auth-storage"
 import type { SourceRef, StreamPhase } from "../types"
 
 export interface StreamCallbacks {
@@ -42,6 +43,11 @@ async function fetchStream(
   })
 
   if (res.status === 401 && retry) {
+    if (isGuestSession()) {
+      clearTokens()
+      callbacks.onError?.("游客会话已过期，请重新进入或注册登录")
+      return null
+    }
     const newToken = await refreshAccessToken()
     if (newToken) {
       return fetchStream(sessionId, message, callbacks, signal, false)

@@ -22,6 +22,20 @@ def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> st
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
+def create_guest_access_token(subject: str, extra: dict[str, Any] | None = None) -> str:
+    settings = get_settings()
+    expire = _utcnow() + timedelta(hours=settings.guest_access_expire_hours)
+    payload: dict[str, Any] = {
+        "sub": subject,
+        "type": "access",
+        "exp": expire,
+        "role": "guest",
+    }
+    if extra:
+        payload.update(extra)
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
 def create_refresh_token(subject: str) -> tuple[str, datetime]:
     settings = get_settings()
     expire = _utcnow() + timedelta(days=settings.jwt_refresh_expire_days)

@@ -5,14 +5,22 @@ import { Input } from "@/components/ui/input"
 interface AuthPageProps {
   mode: "login" | "register"
   onSubmit: (email: string, password: string) => Promise<void>
+  onGuestEnter: () => Promise<void>
   onToggleMode: () => void
   error: string | null
 }
 
-export function AuthPage({ mode, onSubmit, onToggleMode, error }: AuthPageProps) {
+export function AuthPage({
+  mode,
+  onSubmit,
+  onGuestEnter,
+  onToggleMode,
+  error,
+}: AuthPageProps) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [guestLoading, setGuestLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -71,10 +79,39 @@ export function AuthPage({ mode, onSubmit, onToggleMode, error }: AuthPageProps)
             </p>
           )}
 
-          <Button type="submit" className="w-full" disabled={submitting}>
+          <Button type="submit" className="w-full" disabled={submitting || guestLoading}>
             {submitting ? "请稍候…" : mode === "login" ? "登录" : "注册"}
           </Button>
         </form>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-card px-2 text-muted-foreground">或</span>
+          </div>
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          disabled={submitting || guestLoading}
+          onClick={async () => {
+            setGuestLoading(true)
+            try {
+              await onGuestEnter()
+            } finally {
+              setGuestLoading(false)
+            }
+          }}
+        >
+          {guestLoading ? "请稍候…" : "以游客身份继续"}
+        </Button>
+        <p className="text-center text-xs text-muted-foreground">
+          游客模式可体验对话，每日次数有限，对话记录仅保存在当前浏览器会话
+        </p>
 
         <p className="text-center text-sm text-muted-foreground">
           {mode === "login" ? "还没有账户？" : "已有账户？"}

@@ -3,15 +3,29 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import secrets
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
-from app.auth.jwt import create_access_token, create_refresh_token, verify_refresh_token
+from app.auth.jwt import (
+    create_access_token,
+    create_guest_access_token,
+    create_refresh_token,
+    verify_refresh_token,
+)
 from app.auth.password import hash_password, verify_password
-from app.auth.schemas import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse, UserOut
+from app.auth.schemas import (
+    GuestTokenResponse,
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserOut,
+)
 from app.config import get_settings
 from app.db import crud
 from app.db.audit import log_audit
@@ -107,6 +121,53 @@ async def login(
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
+@router.post("/guest", response_model=GuestTokenResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/hour")
+async def guest_login(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    settings = get_settings()
+    if not settings.guest_enabled:
+        raise HTTPException(status_code=403, detail="游客访问未开启")
+
+    guest_id = str(uuid.uuid4())
+    tenant = Tenant(name="游客工作区")
+    db.add(tenant)
+    await db.flush()
+
+    subscription = Subscription(
+        tenant_id=tenant.id,
+        plan="guest",
+        daily_chat_limit=settings.guest_daily_chat_limit,
+        daily_rag_limit=settings.guest_daily_rag_limit,
+    )
+    db.add(subscription)
+
+    user = User(
+        email=f"guest-{guest_id}@guest.local",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+        role="guest",
+        tenant_id=tenant.id,
+    )
+    db.add(user)
+    await db.flush()
+
+    access_token = create_guest_access_token(
+        user.id,
+        {"tenant_id": user.tenant_id, "role": "guest"},
+    )
+    await log_audit(
+        db,
+        action="user.guest",
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.flush()
+    return GuestTokenResponse(access_token=access_token)
+
+
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
     user_id = verify_refresh_token(req.refresh_token)
@@ -174,11 +235,13 @@ async def logout(
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     sub = await crud.get_subscription(db, user.tenant_id)
+    is_guest = user.role == "guest"
     return UserOut(
         id=user.id,
-        email=user.email,
+        email="游客" if is_guest else user.email,
         role=user.role,
         tenant_id=user.tenant_id,
         plan=sub.plan if sub else "free",
+        is_guest=is_guest,
         created_at=user.created_at,
     )

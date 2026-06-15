@@ -4,7 +4,7 @@ import { AuthPage } from "@/components/auth/AuthPage"
 import { useAuth } from "@/hooks/useAuth"
 
 function App() {
-  const { user, loading, login, register } = useAuth()
+  const { user, loading, login, register, enterAsGuest } = useAuth()
   const [mode, setMode] = useState<"login" | "register">("login")
   const [error, setError] = useState<string | null>(null)
 
@@ -24,6 +24,14 @@ function App() {
         onToggleMode={() => {
           setMode(mode === "login" ? "register" : "login")
           setError(null)
+        }}
+        onGuestEnter={async () => {
+          setError(null)
+          try {
+            await enterAsGuest()
+          } catch (e) {
+            setError(e instanceof Error ? e.message : "游客访问失败")
+          }
         }}
         onSubmit={async (email, password) => {
           setError(null)

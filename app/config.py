@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     jwt_access_expire_minutes: int = 15
     jwt_refresh_expire_days: int = 7
 
+    # 游客访问
+    guest_enabled: bool = True
+    guest_daily_chat_limit: int = 20
+    guest_daily_rag_limit: int = 20
+    guest_access_expire_hours: int = 24
+
     # CORS（逗号分隔）
     cors_origins: str = "http://localhost:5173,http://localhost:8000"
 

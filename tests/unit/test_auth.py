@@ -63,6 +63,25 @@ async def test_login_wrong_password(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_guest_login(client: AsyncClient):
+    resp = await client.post("/api/v1/auth/guest")
+    assert resp.status_code == 201
+    body = resp.json()
+    assert "access_token" in body
+    assert "refresh_token" not in body
+
+    me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {body['access_token']}"},
+    )
+    assert me.status_code == 200
+    profile = me.json()
+    assert profile["is_guest"] is True
+    assert profile["email"] == "游客"
+    assert profile["plan"] == "guest"
+
+
+@pytest.mark.asyncio
 async def test_refresh_token(client: AsyncClient):
     reg = await client.post(
         "/api/v1/auth/register",

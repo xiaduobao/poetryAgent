@@ -11,6 +11,7 @@ import {
   authApi,
   clearTokens,
   getAccessToken,
+  setGuestToken,
   setTokens,
 } from "@/api/client"
 import type { AuthUser } from "@/api/auth-storage"
@@ -20,6 +21,7 @@ interface AuthContextValue {
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string) => Promise<void>
+  enterAsGuest: () => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -68,6 +70,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [loadUser],
   )
 
+  const enterAsGuest = useCallback(async () => {
+    const token = await authApi.guest()
+    setGuestToken(token.access_token)
+    await loadUser()
+  }, [loadUser])
+
   const logout = useCallback(async () => {
     try {
       await authApi.logout()
@@ -78,8 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout }),
-    [user, loading, login, register, logout],
+    () => ({ user, loading, login, register, enterAsGuest, logout }),
+    [user, loading, login, register, enterAsGuest, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
