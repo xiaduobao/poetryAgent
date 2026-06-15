@@ -1,4 +1,5 @@
 """混合检索 + BGE Rerank。"""
+import warnings
 from functools import lru_cache
 from typing import Any
 
@@ -6,6 +7,7 @@ from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
 from app.config import get_settings
+from app.observability.langsmith import traceable, update_run_metadata
 from app.rag.chunker import load_poetry_documents, split_with_overlap
 from app.rag.indexer import get_vector_store
 
@@ -59,6 +61,7 @@ class HybridRetriever:
                 merged.append(doc)
         return merged
 
+    @traceable(run_type="retriever", name="hybrid_retrieve")
     def retrieve(
         self,
         query: str,
@@ -79,7 +82,17 @@ class HybridRetriever:
                 if self._match_filter(d, author=author, dynasty=dynasty, genre=genre)
             ] or merged
 
-        return self._rerank(query, merged)
+        docs, top_scores = self._rerank(query, merged)
+        update_run_metadata(
+            doc_count=len(docs),
+            vector_k=k,
+            bm25_k=k,
+            rerank_n=self.settings.rerank_top_n,
+            filter_applied=bool(author or dynasty or genre),
+            top_scores=top_scores,
+            query=query[:200],
+        )
+        return docs
 
     def _match_filter(
         self,
@@ -99,15 +112,21 @@ class HybridRetriever:
             return False
         return True
 
-    def _rerank(self, query: str, docs: list[Document]) -> list[Document]:
+    def _rerank(self, query: str, docs: list[Document]) -> tuple[list[Document], list[float]]:
         if not docs:
-            return []
+            return [], []
         reranker = _get_reranker()
         if reranker is None:
-            return docs[: self.settings.rerank_top_n]
+            result = docs[: self.settings.rerank_top_n]
+            return result, []
 
         pairs = [[query, d.page_content] for d in docs]
-        scores = reranker.compute_score(pairs, normalize=True)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*XLMRobertaTokenizerFast tokenizer.*",
+            )
+            scores = reranker.compute_score(pairs, normalize=True)
         if not isinstance(scores, list):
             scores = [scores]
         ranked = sorted(
@@ -115,7 +134,9 @@ class HybridRetriever:
             key=lambda x: x[1],
             reverse=True,
         )
-        return [d for d, _ in ranked[: self.settings.rerank_top_n]]
+        top = ranked[: self.settings.rerank_top_n]
+        top_scores = [round(float(s), 4) for _, s in ranked[:3]]
+        return [d for d, _ in top], top_scores
 
 
 def _get_reranker():

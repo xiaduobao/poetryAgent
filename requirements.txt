@@ -27,6 +27,13 @@ FlagEmbedding>=1.2.0
 # LLM (OpenAI-compatible API)
 langchain-openai>=0.2.0
 
+# Observability
+langsmith>=0.1.0
+
 # Utils
 httpx>=0.26.0
 tiktoken>=0.5.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.19.0

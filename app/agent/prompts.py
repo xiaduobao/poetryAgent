@@ -12,6 +12,10 @@ SYSTEM_PROMPT = """你是一位专业的古典诗词鉴赏助手。
 - 作者生平 → 使用 author_query
 - 格律分析 → 使用 meter_analysis
 - 风格对比 → 使用 style_compare
+- 查找原文/注释/译文 → 使用 poem_lookup
+- 按主题推荐诗词 → 使用 theme_recommend
+- 典故/字词释义 → 使用 allusion_explain
+- 诗词创作辅助 → 使用 writing_assistant（提供指南后可据工具结果创作示例）
 - 诗词鉴赏/赏析 → 使用知识库检索内容作答
 """
 
@@ -45,10 +49,14 @@ STRUCTURED_OUTPUT_HINT = """
 """
 
 INTENT_CLASSIFIER_PROMPT = """判断用户意图，只输出一个词：
-- rag：诗词鉴赏、赏析、查询某首诗的内容/注释/译文
+- rag：诗词鉴赏、赏析、查询某首诗的内容/注释/译文（深度赏析类）
 - tool_author：查询作者生平、代表作、风格
 - tool_meter：分析格律、平仄、押韵、体裁
 - tool_compare：对比两位诗人或两种风格
+- tool_lookup：查找诗词原文、注释、译文、全文
+- tool_theme：按主题/情感推荐诗词（思乡、送别、怀古等）
+- tool_allusion：解释典故、字词含义、地名历史人物
+- tool_writing：创作诗词、对联、藏头诗、填词、仿写
 - chat：一般闲聊或与诗词弱相关
 
 用户输入：{query}

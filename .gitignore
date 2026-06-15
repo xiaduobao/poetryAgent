@@ -11,3 +11,6 @@ data/chroma_db/
 .DS_Store
 models/
 .python-version
+frontend/node_modules/
+frontend/dist/
+data/sessions.db

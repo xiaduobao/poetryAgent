@@ -27,6 +27,8 @@ LangGraph Agent
 | 层级 | 技术 |
 |------|------|
 | 后端 | Python 3.11 + FastAPI |
+| 前端 | React 19 + Vite + shadcn/ui + Tailwind |
+| 会话 | SQLite 持久化 + SSE 流式输出 |
 | Agent | LangChain + LangGraph |
 | RAG | BGE-small-zh Embedding + Chroma + BM25 混合检索 + BGE-Rerank |
 | 工具 | 作者生平 JSON / 格律分析 / 风格对比 |
@@ -78,23 +80,124 @@ python scripts/download_models.py
 
 4. 或使用 [HF-Mirror 文档](https://hf-mirror.com) 中的 `huggingface-cli download`，下载后把 `.env` 里模型改为本地目录绝对路径。
 
-### 3. 启动服务
+### 3. 启动后端
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-访问 http://localhost:8000/docs 查看 Swagger。
+访问 http://localhost:8000/docs 查看 Swagger API。
 
-### 4. Docker 部署
+### 4. 启动前端（开发模式）
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+浏览器打开 http://localhost:5173 。Vite 会将 `/api` 代理到后端 `8000` 端口。
+
+**前端功能**：会话侧边栏（新建 / 列表 / 搜索 / 重命名 / 删除）、SSE 流式输出、Markdown 渲染、多行输入（Shift+Enter 换行）、字数限制、停止生成、深色模式。
+
+### 5. 生产构建（前后端一体）
+
+```bash
+cd frontend && npm run build && cd ..
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+构建后访问 http://localhost:8000 即为聊天界面，API 仍在 `/api/v1`。
+
+### 6. Docker 部署
 
 ```bash
 docker compose up --build
 ```
 
+## 可观测性（LangSmith）
+
+项目已集成 [LangSmith](https://smith.langchain.com/)，用于追踪 Agent 全链路：API 根 Run → 意图识别 → RAG/工具 → LLM 流式生成。
+
+### 启用方式
+
+在 `.env` 中配置（参见 `.env.example`）：
+
+| 变量 | 说明 |
+|------|------|
+| `LANGSMITH_API_KEY` | [LangSmith API Key](https://smith.langchain.com/settings) |
+| `LANGSMITH_TRACING` | 设为 `true` 启用追踪 |
+| `LANGSMITH_PROJECT` | 项目名，默认 `poetry-agent`；可用 `poetry-agent-dev` / `poetry-agent-prod` 区分环境 |
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_pt_...
+LANGSMITH_PROJECT=poetry-agent-dev
+```
+
+重启后端后，在 LangSmith UI 的对应 Project 中即可看到每次 `/chat`、`/chat/stream`、`/rag`、`/tools/*` 的 Run 树。
+
+### Run 树结构
+
+```
+chat_request（根）
+├── prepare_agent
+│   ├── classify_intent（metadata: intent_source, final_intent）
+│   ├── retrieve_rag / prepare_tool_call + run_tools
+│   └── hybrid_retrieve（metadata: doc_count, top_scores）
+└── stream_final_answer / collect_stream（metadata: ttft_ms, mode）
+```
+
+可按 tag `session_id:<uuid>` 过滤同一会话的多轮对话。
+
+### 推荐监控指标
+
+在 LangSmith Dashboard 中可按 metadata 聚合以下指标：
+
+| 优先级 | 指标 | metadata / 字段 |
+|--------|------|-----------------|
+| P0 | E2E 延迟 p50/p95 | 根 Run `latency` |
+| P0 | 流式 TTFT | `ttft_ms` |
+| P0 | 错误率 | Run `status=error` |
+| P0 | Token 用量 / 成本 | LLM Run 自动记录 |
+| P1 | 意图分布 | `intent` |
+| P1 | 规则命中率 | `intent_source=rule` |
+| P1 | RAG 空召回率 | `doc_count=0` |
+| P1 | 工具成功率 | `tool_results` |
+| P2 | 每会话轮数 | tag `session_id:*` |
+
+建议创建三个视图：**Ops**（延迟/错误）、**Cost**（Token/意图分组）、**Quality**（意图分布/空召回/工具错误）。
+
 ## API 示例
 
-### 诗词鉴赏（Agent 自动走 RAG）
+### 流式对话（SSE）
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "请赏析《登高》", "session_id": "<uuid>"}'
+```
+
+事件类型：`status`（阶段）→ `token`（逐字）→ `done`（完成）。
+
+### 会话管理
+
+```bash
+# 新建会话
+curl -X POST http://localhost:8000/api/v1/sessions
+
+# 列表 / 搜索
+curl "http://localhost:8000/api/v1/sessions?q=登高"
+
+# 重命名
+curl -X PATCH http://localhost:8000/api/v1/sessions/<id> \
+  -H "Content-Type: application/json" -d '{"title": "杜甫登高赏析"}'
+
+# 删除
+curl -X DELETE http://localhost:8000/api/v1/sessions/<id>
+```
+
+### 诗词鉴赏（Agent 自动走 RAG，非流式）
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat \
@@ -147,13 +250,20 @@ curl -X POST http://localhost:8000/api/v1/rag \
 ```
 poetryAgent/
 ├── app/
-│   ├── main.py           # FastAPI 入口
+│   ├── main.py           # FastAPI 入口（含 StaticFiles 挂载）
 │   ├── config.py         # 配置
+│   ├── observability/    # LangSmith 追踪
+│   ├── db/               # SQLite 会话持久化
 │   ├── api/              # 路由与 Schema
 │   ├── rag/              # 分块、Embedding、混合检索、Rerank
 │   ├── agent/            # LangGraph 工作流、Prompt、工具绑定
 │   ├── tools/            # 作者/格律/对比
 │   └── security/         # 输入过滤
+├── frontend/             # React 聊天 UI（Vite + shadcn/ui）
+│   └── src/
+│       ├── components/   # SessionSidebar、MessageList、ChatInput
+│       ├── hooks/        # useSessions、useChatStream
+│       └── api/          # REST + SSE 客户端
 ├── data/
 │   ├── corpus/           # 诗词 Markdown 语料
 │   ├── authors.json      # 作者库

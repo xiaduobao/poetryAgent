@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = str(ROOT_DIR / "data" / "chroma_db")
     corpus_dir: str = str(ROOT_DIR / "data" / "corpus")
     authors_db: str = str(ROOT_DIR / "data" / "authors.json")
+    sessions_db: str = str(ROOT_DIR / "data" / "sessions.db")
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -35,6 +36,10 @@ class Settings(BaseSettings):
     chunk_overlap_tokens: int = 100
     retrieval_top_k: int = 8
     rerank_top_n: int = 4
+
+    langsmith_api_key: str = ""
+    langsmith_tracing: bool = False
+    langsmith_project: str = "poetry-agent"
 
 
 def apply_hf_hub_env(settings: Settings | None = None) -> None:
