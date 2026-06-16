@@ -44,13 +44,16 @@ source "${DEPLOY_ENV}"
 : "${REMOTE_DIR:=/opt/poetry-agent}"
 
 SSH_KEY_EXPANDED="${SSH_KEY/#\~/$HOME}"
-SSH_OPTS=(-p "${ECS_PORT}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
+SSH_COMMON=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
+SSH_OPTS=(-p "${ECS_PORT}" "${SSH_COMMON[@]}")
+SCP_OPTS=(-P "${ECS_PORT}" "${SSH_COMMON[@]}")
 if [[ -n "${SSH_KEY:-}" ]]; then
     if [[ ! -f "${SSH_KEY_EXPANDED}" ]]; then
         echo "SSH 私钥不存在: ${SSH_KEY_EXPANDED}" >&2
         exit 1
     fi
     SSH_OPTS+=(-i "${SSH_KEY_EXPANDED}")
+    SCP_OPTS+=(-i "${SSH_KEY_EXPANDED}")
 fi
 
 REMOTE="${ECS_USER}@${ECS_HOST}"
@@ -65,7 +68,7 @@ if [[ "${ENV_ONLY}" == true ]]; then
         exit 1
     fi
     echo "==> 上传 .env..."
-    scp "${SSH_OPTS[@]}" "${PROJECT_ROOT}/.env" "${REMOTE}:${REMOTE_DIR}/.env"
+    scp "${SCP_OPTS[@]}" "${PROJECT_ROOT}/.env" "${REMOTE}:${REMOTE_DIR}/.env"
     echo "==> 重启容器..."
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh restart"
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh health" || true
@@ -78,7 +81,7 @@ ssh "${SSH_OPTS[@]}" "${REMOTE}" "mkdir -p '${REMOTE_DIR}'"
 
 echo "==> rsync 同步项目..."
 rsync -avz --delete \
-    --filter='merge .rsyncignore' \
+    --exclude-from="${PROJECT_ROOT}/.rsyncignore" \
     -e "${RSYNC_SSH}" \
     "${PROJECT_ROOT}/" \
     "${REMOTE}:${REMOTE_DIR}/"
@@ -93,7 +96,7 @@ fi
 
 if [[ -f "${PROJECT_ROOT}/.env" ]]; then
     echo "==> 上传 .env..."
-    scp "${SSH_OPTS[@]}" "${PROJECT_ROOT}/.env" "${REMOTE}:${REMOTE_DIR}/.env"
+    scp "${SCP_OPTS[@]}" "${PROJECT_ROOT}/.env" "${REMOTE}:${REMOTE_DIR}/.env"
 else
     echo "警告: 本地无 .env，请确保远端 ${REMOTE_DIR}/.env 已配置" >&2
 fi
