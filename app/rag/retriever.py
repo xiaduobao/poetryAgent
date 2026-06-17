@@ -1,7 +1,7 @@
 """混合检索 + BGE Rerank。"""
+import logging
 import warnings
 from functools import lru_cache
-from typing import Any
 
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
@@ -11,7 +11,10 @@ from app.observability.langsmith import traceable, update_run_metadata
 from app.rag.chunker import load_poetry_documents, split_with_overlap
 from app.rag.indexer import get_vector_store
 
+logger = logging.getLogger(__name__)
+
 _reranker = None
+_reranker_disabled = False
 
 
 def _tokenize_zh(text: str) -> list[str]:
@@ -121,12 +124,16 @@ class HybridRetriever:
             return result, []
 
         pairs = [[query, d.page_content] for d in docs]
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=".*XLMRobertaTokenizerFast tokenizer.*",
-            )
-            scores = reranker.compute_score(pairs, normalize=True)
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*XLMRobertaTokenizerFast tokenizer.*",
+                )
+                scores = reranker.compute_score(pairs, normalize=True)
+        except Exception as e:
+            logger.warning("rerank compute_score failed, fallback to retrieval order: %s", e)
+            return docs[: self.settings.rerank_top_n], []
         if not isinstance(scores, list):
             scores = [scores]
         ranked = sorted(
@@ -140,21 +147,27 @@ class HybridRetriever:
 
 
 def _get_reranker():
-    global _reranker
+    global _reranker, _reranker_disabled
+    if _reranker_disabled:
+        return None
     if _reranker is not None:
         return _reranker
+    settings = get_settings()
+    if not settings.rerank_model.strip():
+        _reranker_disabled = True
+        return None
     try:
         from FlagEmbedding import FlagReranker
 
         from app.rag.embedder import resolve_model_path
 
-        settings = get_settings()
         _reranker = FlagReranker(
             resolve_model_path(settings.rerank_model),
             use_fp16=False,
         )
-    except Exception:
-        _reranker = False  # type: ignore
+    except Exception as e:
+        logger.warning("rerank model load failed, skipping rerank: %s", e)
+        _reranker = False  # type: ignore[assignment]
     return _reranker if _reranker is not False else None
 
 

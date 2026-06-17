@@ -10,8 +10,9 @@ venv/
 .DS_Store
 .python-version
 
-# 密钥与本地部署配置
+# 密钥与本地部署配置（.env.prod 由 deploy.sh 单独 scp 上传）
 .env
+.env.prod
 scripts/deploy/deploy.env
 
 # 前端构建产物（Docker 内重新构建）

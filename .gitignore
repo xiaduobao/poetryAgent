@@ -1,4 +1,5 @@
 .env
+.env.prod
 .idea
 __pycache__/
 *.py[cod]

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# 本地一键发布到阿里云 ECS：rsync 同步代码 → scp .env → 远程 docker compose build。
+# 本地一键发布到阿里云 ECS：rsync 同步代码 → scp .env.prod → 远程 docker compose 启动。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DEPLOY_ENV="${SCRIPT_DIR}/deploy.env"
+PROD_ENV="${PROJECT_ROOT}/.env.prod"
 
 WITH_DATA=false
 ENV_ONLY=false
@@ -16,7 +17,7 @@ usage() {
 
 选项:
   --with-data   额外同步 data/（语料、向量库、模型、postgres/redis 数据目录）
-  --env-only    仅更新远端 .env 并重启容器
+  --env-only    仅更新远端 .env.prod 并重启容器
   --pull        仅拉取 ACR 镜像并重启（需 deploy.env 中 POETRY_AGENT_IMAGE）
   -h, --help    显示帮助
 EOF
@@ -62,6 +63,16 @@ fi
 REMOTE="${ECS_USER}@${ECS_HOST}"
 RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 
+_upload_prod_env() {
+    if [[ ! -f "${PROD_ENV}" ]]; then
+        echo "本地 .env.prod 不存在: ${PROD_ENV}" >&2
+        echo "请先执行: cp .env.prod.example .env.prod 并填写生产配置" >&2
+        exit 1
+    fi
+    echo "==> 上传 .env.prod..."
+    scp "${SCP_OPTS[@]}" "${PROD_ENV}" "${REMOTE}:${REMOTE_DIR}/.env.prod"
+}
+
 _write_compose_env() {
     if [[ -n "${POETRY_AGENT_IMAGE:-}" ]]; then
         echo "==> 写入远端镜像地址..."
@@ -83,12 +94,7 @@ if [[ "${PULL_ONLY}" == true ]]; then
 fi
 
 if [[ "${ENV_ONLY}" == true ]]; then
-    if [[ ! -f "${PROJECT_ROOT}/.env" ]]; then
-        echo "本地 .env 不存在: ${PROJECT_ROOT}/.env" >&2
-        exit 1
-    fi
-    echo "==> 上传 .env..."
-    scp "${SCP_OPTS[@]}" "${PROJECT_ROOT}/.env" "${REMOTE}:${REMOTE_DIR}/.env"
+    _upload_prod_env
     echo "==> 重启容器..."
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh restart"
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh health" || true
@@ -114,12 +120,7 @@ if [[ "${WITH_DATA}" == true ]]; then
         "${REMOTE}:${REMOTE_DIR}/data/"
 fi
 
-if [[ -f "${PROJECT_ROOT}/.env" ]]; then
-    echo "==> 上传 .env..."
-    scp "${SCP_OPTS[@]}" "${PROJECT_ROOT}/.env" "${REMOTE}:${REMOTE_DIR}/.env"
-else
-    echo "警告: 本地无 .env，请确保远端 ${REMOTE_DIR}/.env 已配置" >&2
-fi
+_upload_prod_env
 
 _write_compose_env
 
