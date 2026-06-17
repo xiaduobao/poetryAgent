@@ -1,8 +1,13 @@
-# 供 ACR 控制台「镜像构建」使用
-# 基础镜像走阿里云新加坡区域代理（同区域，避免 docker.io 429）
-# 路径 library/ 对应 Docker Hub 官方镜像
+# 供 ACR 云构建 / ECS docker build 使用
+# 基础镜像走阿里云 Docker Hub 加速：registry.aliyuncs.com/library/
+# 若加速地址不可用，可传 build-arg 改用 Docker Hub 或个人 ACR 同步镜像：
+#   --build-arg NODE_IMAGE=node:20-slim
+#   --build-arg PYTHON_IMAGE=python:3.11-slim
+ARG NODE_IMAGE=registry.aliyuncs.com/library/node:20-slim
+ARG PYTHON_IMAGE=registry.aliyuncs.com/library/python:3.11-slim
+
 # ---- Frontend build ----
-FROM registry.ap-southeast-1.aliyuncs.com/library/node:20-slim AS frontend-build
+FROM ${NODE_IMAGE} AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm config set registry https://registry.npmmirror.com \
@@ -11,7 +16,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ---- Backend deps ----
-FROM registry.ap-southeast-1.aliyuncs.com/library/python:3.11-slim AS backend-deps
+FROM ${PYTHON_IMAGE} AS backend-deps
 
 WORKDIR /app
 
@@ -46,7 +51,7 @@ RUN if pip list | grep -iE '^nvidia-'; then \
     && python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__; print('torch OK:', torch.__version__)"
 
 # ---- Backend runtime ----
-FROM registry.ap-southeast-1.aliyuncs.com/library/python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 WORKDIR /app
 
