@@ -1,0 +1,13 @@
+# ECS 生产：从 ACR 拉取镜像（不在 ECS / 本地 build）
+# 镜像在 ACR 控制台手动构建后 push 到此地址
+services:
+  poetry-agent:
+    image: ${POETRY_AGENT_IMAGE:-crpi-60eut63p9vp6h7li.ap-southeast-1.personal.cr.aliyuncs.com/bobpoc/poetryagent:latest}
+    build: !reset null
+    env_file: !reset
+      - .env.prod
+    environment:
+      - APP_ENV=production
+    ports:
+      - "127.0.0.1:8000:8000"
+    pull_policy: always
