@@ -21,13 +21,16 @@ source "${DEPLOY_ENV}"
 : "${REMOTE_DIR:=/opt/poetry-agent}"
 
 SSH_KEY_EXPANDED="${SSH_KEY/#\~/$HOME}"
-SSH_OPTS=(-p "${ECS_PORT}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
+SSH_COMMON=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
+SSH_OPTS=(-p "${ECS_PORT}" "${SSH_COMMON[@]}")
+SCP_OPTS=(-P "${ECS_PORT}" "${SSH_COMMON[@]}")
 if [[ -n "${SSH_KEY:-}" ]]; then
     if [[ ! -f "${SSH_KEY_EXPANDED}" ]]; then
         echo "SSH 私钥不存在: ${SSH_KEY_EXPANDED}" >&2
         exit 1
     fi
     SSH_OPTS+=(-i "${SSH_KEY_EXPANDED}")
+    SCP_OPTS+=(-i "${SSH_KEY_EXPANDED}")
 fi
 
 REMOTE="${ECS_USER}@${ECS_HOST}"
@@ -36,7 +39,7 @@ echo "==> 测试 SSH 连接 (${REMOTE})..."
 ssh "${SSH_OPTS[@]}" "${REMOTE}" "echo connected"
 
 echo "==> 上传 Nginx 配置..."
-scp "${SSH_OPTS[@]}" "${NGINX_CONF}" "${REMOTE}:/tmp/poetry-agent.conf"
+scp "${SCP_OPTS[@]}" "${NGINX_CONF}" "${REMOTE}:/tmp/poetry-agent.conf"
 
 echo "==> 在 ECS 上安装 Docker 与 Nginx..."
 ssh "${SSH_OPTS[@]}" "${REMOTE}" bash -s -- "${REMOTE_DIR}" <<'REMOTE_SETUP'
@@ -70,36 +73,36 @@ install_docker() {
 install_nginx() {
     if command -v nginx >/dev/null 2>&1; then
         echo "Nginx 已安装: $(nginx -v 2>&1)"
-        return
+    else
+        case "${OS_ID}" in
+            ubuntu|debian)
+                apt-get update -y
+                apt-get install -y nginx curl
+                ;;
+            alinux|centos|rhel|rocky|almalinux|fedora)
+                if command -v dnf >/dev/null 2>&1; then
+                    dnf install -y nginx curl
+                else
+                    yum install -y nginx curl
+                fi
+                ;;
+            *)
+                echo "未识别的发行版，尝试通用安装..."
+                if command -v apt-get >/dev/null 2>&1; then
+                    apt-get update -y && apt-get install -y nginx curl
+                elif command -v dnf >/dev/null 2>&1; then
+                    dnf install -y nginx curl
+                elif command -v yum >/dev/null 2>&1; then
+                    yum install -y nginx curl
+                else
+                    echo "无法自动安装 Nginx，请手动安装后重试" >&2
+                    exit 1
+                fi
+                ;;
+        esac
     fi
-    case "${OS_ID}" in
-        ubuntu|debian)
-            apt-get update -y
-            apt-get install -y nginx curl
-            ;;
-        alinux|centos|rhel|rocky|almalinux|fedora)
-            if command -v dnf >/dev/null 2>&1; then
-                dnf install -y nginx curl
-            else
-                yum install -y nginx curl
-            fi
-            ;;
-        *)
-            echo "未识别的发行版，尝试通用安装..."
-            if command -v apt-get >/dev/null 2>&1; then
-                apt-get update -y && apt-get install -y nginx curl
-            elif command -v dnf >/dev/null 2>&1; then
-                dnf install -y nginx curl
-            elif command -v yum >/dev/null 2>&1; then
-                yum install -y nginx curl
-            else
-                echo "无法自动安装 Nginx，请手动安装后重试" >&2
-                exit 1
-            fi
-            ;;
-    esac
     systemctl enable nginx
-    systemctl start nginx
+    systemctl start nginx || systemctl restart nginx
 }
 
 install_docker
@@ -116,19 +119,24 @@ fi
 
 mkdir -p "${REMOTE_DIR}"
 
-if [[ -d /etc/nginx/conf.d ]]; then
-    cp /tmp/poetry-agent.conf /etc/nginx/conf.d/poetry-agent.conf
-elif [[ -d /etc/nginx/sites-available ]]; then
+# Ubuntu 默认站点与 poetry-agent 同时 default_server 会冲突
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+
+if [[ -d /etc/nginx/sites-available ]]; then
     cp /tmp/poetry-agent.conf /etc/nginx/sites-available/poetry-agent.conf
     ln -sf /etc/nginx/sites-available/poetry-agent.conf /etc/nginx/sites-enabled/poetry-agent.conf
-    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+    rm -f /etc/nginx/conf.d/poetry-agent.conf 2>/dev/null || true
+elif [[ -d /etc/nginx/conf.d ]]; then
+    cp /tmp/poetry-agent.conf /etc/nginx/conf.d/poetry-agent.conf
 else
     echo "无法定位 Nginx 配置目录" >&2
     exit 1
 fi
 
 nginx -t
-systemctl reload nginx
+systemctl enable nginx
+systemctl restart nginx
+systemctl is-active nginx
 
 echo ""
 echo "ECS 初始化完成。"
