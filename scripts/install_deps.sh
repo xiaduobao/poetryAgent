@@ -18,7 +18,7 @@ case "$VER" in
     ;;
 esac
 
-PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+PIP_INDEX="${PIP_INDEX:-https://mirrors.aliyun.com/pypi/simple/}"
 EXTRA="${1:-}"
 
 echo "==> Python $VER ($PY)"

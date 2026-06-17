@@ -236,7 +236,69 @@ LANGSMITH_PROJECT=poetry-agent-prod
 #### 日常更新
 
 ```bash
-./scripts/deploy/deploy.sh              # 同步代码并重建容器
+./scripts/deploy/deploy.sh              # 同步配置并启动（ACR 模式只 pull，不 build）
+./scripts/deploy/deploy.sh --with-data  # 同步 data/（语料、模型、向量库）
+./scripts/deploy/deploy.sh --env-only   # 仅更新 .env 并重启
+./scripts/deploy/deploy.sh --pull       # 仅拉取最新 ACR 镜像并重启
+```
+
+#### 推荐：阿里云 ACR 部署（避免 ECS 运行时 build）
+
+在 ECS 上构建镜像耗时长（torch 等依赖）。推荐 **云端 build → push ACR → ECS pull 启动**。
+
+> **说明**：ACR **个人版**是镜像仓库，没有「在 ACR 控制台里自动 build Dockerfile」。
+> 常见做法：在 **ECS 上 build**（本脚本）或 **本地 build**（`build-push-acr.sh`），再 push 到 ACR。
+
+**1. 配置 `scripts/deploy/deploy.env`**
+
+```env
+POETRY_AGENT_IMAGE=crpi-xxxxx.ap-southeast-1.personal.cr.aliyuncs.com/bobpoc/poetryagent:latest
+ACR_REGISTRY=crpi-xxxxx.ap-southeast-1.personal.cr.aliyuncs.com
+ACR_USERNAME=你的阿里云账号
+ACR_PASSWORD=ACR控制台-访问凭证-固定密码
+```
+
+**2. 在 ECS 上构建并 push ACR（推荐，不在本地打镜像）**
+
+```bash
+./scripts/deploy/build-on-ecs.sh
+# 强制不用缓存（改了 Dockerfile 后）：
+./scripts/deploy/build-on-ecs.sh --no-cache
+```
+
+**或本地 Mac 构建 push：**
+
+```bash
+./scripts/deploy/build-push-acr.sh --no-cache
+```
+
+**3. ECS 首次登录 ACR（未配置 ACR_USERNAME/PASSWORD 时手动一次）**
+
+```bash
+ssh root@<ECS_IP>
+docker login crpi-xxxxx.ap-southeast-1.personal.cr.aliyuncs.com
+```
+
+**4. 部署到 ECS（只 pull，不 build）**
+
+```bash
+./scripts/deploy/deploy.sh --with-data   # 首次（同步 data/models、chroma_db）
+./scripts/deploy/deploy.sh --pull        # 日常：拉新镜像并重启
+```
+
+ECS 上不再执行 `docker build`，启动约 **1～2 分钟**。
+
+**注意**：模型与向量库仍在 ECS 的 `./data/` 卷中，`.env` 请用容器路径：
+
+```env
+EMBEDDING_MODEL=./data/models/BAAI--bge-small-zh-v1.5
+RERANK_MODEL=./data/models/BAAI--bge-reranker-base
+```
+
+#### 日常更新（ECS 本地 build 方式）
+
+```bash
+./scripts/deploy/deploy.sh              # 同步代码并在 ECS build（较慢）
 ./scripts/deploy/deploy.sh --env-only   # 仅更新 .env 并重启
 ```
 

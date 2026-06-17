@@ -8,6 +8,7 @@ DEPLOY_ENV="${SCRIPT_DIR}/deploy.env"
 
 WITH_DATA=false
 ENV_ONLY=false
+PULL_ONLY=false
 
 usage() {
     cat <<'EOF'
@@ -16,6 +17,7 @@ usage() {
 选项:
   --with-data   额外同步 data/（语料、向量库、模型、postgres/redis 数据目录）
   --env-only    仅更新远端 .env 并重启容器
+  --pull        仅拉取 ACR 镜像并重启（需 deploy.env 中 POETRY_AGENT_IMAGE）
   -h, --help    显示帮助
 EOF
 }
@@ -24,6 +26,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --with-data) WITH_DATA=true; shift ;;
         --env-only) ENV_ONLY=true; shift ;;
+        --pull) PULL_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "未知参数: $1" >&2; usage; exit 1 ;;
     esac
@@ -59,8 +62,25 @@ fi
 REMOTE="${ECS_USER}@${ECS_HOST}"
 RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 
+_write_compose_env() {
+    if [[ -n "${POETRY_AGENT_IMAGE:-}" ]]; then
+        echo "==> 写入远端镜像地址..."
+        ssh "${SSH_OPTS[@]}" "${REMOTE}" "printf 'POETRY_AGENT_IMAGE=%s\n' '${POETRY_AGENT_IMAGE}' > '${REMOTE_DIR}/.compose.env'"
+    fi
+}
+
 echo "==> 测试 SSH 连接 (${REMOTE})..."
 ssh "${SSH_OPTS[@]}" "${REMOTE}" "echo connected"
+
+if [[ "${PULL_ONLY}" == true ]]; then
+    : "${POETRY_AGENT_IMAGE:?请在 deploy.env 中设置 POETRY_AGENT_IMAGE}"
+    _write_compose_env
+    echo "==> 远端拉取镜像并重启..."
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh pull-up"
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh health" || true
+    echo "==> 完成: http://${ECS_HOST}/"
+    exit 0
+fi
 
 if [[ "${ENV_ONLY}" == true ]]; then
     if [[ ! -f "${PROJECT_ROOT}/.env" ]]; then
@@ -101,7 +121,9 @@ else
     echo "警告: 本地无 .env，请确保远端 ${REMOTE_DIR}/.env 已配置" >&2
 fi
 
-echo "==> 远程构建并启动..."
+_write_compose_env
+
+echo "==> 远程启动..."
 ssh "${SSH_OPTS[@]}" "${REMOTE}" "chmod +x '${REMOTE_DIR}/scripts/deploy/'*.sh && cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh up"
 
 echo "==> 等待服务就绪..."
