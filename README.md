@@ -52,7 +52,7 @@ FastAPI (/api/v1/chat/stream)
 | 限流 | 进程内计数 | Redis 共享计数（`RATE_LIMIT_STORAGE_URI`） |
 | 向量库 | 本地 `data/chroma_db` | 挂载 `./data` 卷 |
 
-> **说明**：本地不配 `DATABASE_URL` / `REDIS_URL` 时仍可完整跑通聊天与 RAG；多轮 Agent 记忆在重启后会重置。生产环境请使用 `docker compose up` 获得完整持久化能力。
+> **说明**：本地不配 `DATABASE_URL` / `REDIS_URL` 时仍可完整跑通聊天与 RAG；多轮 Agent 记忆在重启后会重置。生产环境请使用 `docker compose -f docker-compose.dev.yml up` 获得完整持久化能力。
 
 ## 快速开始
 
@@ -168,7 +168,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ### 6. Docker 部署（推荐生产）
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.dev.yml up --build
 ```
 
 Compose 栈包含 **PostgreSQL + Redis + App**，启动时自动执行 `alembic upgrade head` 并完成数据库迁移。访问 http://localhost:8000（需先构建前端或挂载 dist）。
@@ -529,7 +529,8 @@ poetryAgent/
 │       ├── setup-ecs.sh
 │       └── remote-compose.sh
 ├── Dockerfile
-└── docker-compose.yml
+├── docker-compose.dev.yml   # 本地开发（build + .env）
+└── docker-compose.prod.yml  # ECS 生产（ACR pull + .env.prod）
 ```
 
 ## LLM 批量生成语料

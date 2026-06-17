@@ -1,3 +1,5 @@
+# 本地开发：本地 build 镜像，使用 .env
+# 用法：docker compose -f docker-compose.dev.yml up --build
 services:
   postgres:
     image: postgres:16-alpine

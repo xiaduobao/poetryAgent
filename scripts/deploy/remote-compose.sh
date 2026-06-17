@@ -15,14 +15,15 @@ if [[ -f "${PROJECT_DIR}/.compose.env" ]]; then
     set +a
 fi
 
-COMPOSE_FILES=(-f docker-compose.yml)
 if [[ -n "${POETRY_AGENT_IMAGE:-}" ]]; then
     export POETRY_AGENT_IMAGE
-    COMPOSE_FILES+=(-f docker-compose.prod.yml)
+    COMPOSE_FILE=docker-compose.prod.yml
+else
+    COMPOSE_FILE=docker-compose.dev.yml
 fi
 
 compose() {
-    docker compose "${COMPOSE_FILES[@]}" "$@"
+    docker compose -f "${COMPOSE_FILE}" "$@"
 }
 
 usage() {
@@ -33,7 +34,9 @@ usage() {
   up          启动（有 POETRY_AGENT_IMAGE 则 pull，否则 build）
   pull-up     从 ACR 拉取镜像并启动（需 .compose.env）
   down        停止并移除容器
-  restart     重启服务
+  restart     重启服务（不重新加载 .env.prod）
+  recreate    重建 poetry-agent 容器（加载新 .env.prod，不 pull/build）
+  fix-perms   修正 data/ 目录权限（app=1000, postgres=70, redis=999）
   logs        查看日志（follow）
   ps          查看容器状态
   health      检查 /api 与 nginx 健康状态
@@ -65,6 +68,16 @@ cmd_down() {
 
 cmd_restart() {
     compose restart
+}
+
+cmd_recreate() {
+    echo "==> force-recreate poetry-agent（重新读 .env.prod，不 pull/build）..."
+    compose up -d --no-build --force-recreate poetry-agent
+    compose ps poetry-agent
+}
+
+cmd_fix_perms() {
+    bash "${SCRIPT_DIR}/fix-data-permissions.sh" "${PROJECT_DIR}/data"
 }
 
 cmd_logs() {
@@ -108,6 +121,8 @@ case "${COMMAND}" in
     pull-up) cmd_pull_up ;;
     down) cmd_down ;;
     restart) cmd_restart ;;
+    recreate) cmd_recreate ;;
+    fix-perms) cmd_fix_perms ;;
     logs) cmd_logs ;;
     ps) cmd_ps ;;
     health) cmd_health ;;

@@ -19,7 +19,7 @@ usage() {
 
 选项:
   --with-data   额外同步 data/（语料、向量库、模型、postgres/redis 数据目录）
-  --env-only    仅更新远端 .env.prod 并重启容器
+  --env-only    仅更新远端 .env.prod 并重建 poetry-agent 容器（不 pull 镜像）
   --pull        仅拉取 ACR 最新镜像并重启
   -h, --help    显示帮助
 EOF
@@ -66,6 +66,23 @@ fi
 REMOTE="${ECS_USER}@${ECS_HOST}"
 RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 
+_fix_app_data_permissions() {
+    echo "==> 修正 data/ 目录权限（app=1000, postgres=70, redis=999）..."
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && bash scripts/deploy/fix-data-permissions.sh"
+}
+
+_sync_data() {
+    echo "==> rsync 同步 data/（排除 postgres/redis，属主映射为 1000:1000）..."
+    rsync -avz \
+        --chown=1000:1000 \
+        --exclude 'postgres/' \
+        --exclude 'redis/' \
+        -e "${RSYNC_SSH}" \
+        "${PROJECT_ROOT}/data/" \
+        "${REMOTE}:${REMOTE_DIR}/data/"
+    _fix_app_data_permissions
+}
+
 _upload_prod_env() {
     if [[ ! -f "${PROD_ENV}" ]]; then
         echo "本地 .env.prod 不存在: ${PROD_ENV}" >&2
@@ -96,6 +113,36 @@ _remote_pull_up() {
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh pull-up"
 }
 
+_sync_compose_config() {
+    echo "==> 同步 compose 与部署脚本..."
+    rsync -avz -e "${RSYNC_SSH}" \
+        "${PROJECT_ROOT}/docker-compose.dev.yml" \
+        "${PROJECT_ROOT}/docker-compose.prod.yml" \
+        "${REMOTE}:${REMOTE_DIR}/"
+    rsync -avz -e "${RSYNC_SSH}" \
+        "${PROJECT_ROOT}/scripts/deploy/" \
+        "${REMOTE}:${REMOTE_DIR}/scripts/deploy/"
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" "chmod +x '${REMOTE_DIR}/scripts/deploy/'*.sh"
+}
+
+_remote_recreate() {
+    _write_compose_env
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh recreate"
+    echo "==> 校验容器已重建、环境变量已加载..."
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" bash -s "${REMOTE_DIR}" <<'EOS'
+cd "$1"
+set -a
+# shellcheck source=/dev/null
+[[ -f .compose.env ]] && source .compose.env
+set +a
+files=(-f docker-compose.prod.yml)
+cid=$(docker compose "${files[@]}" ps -q poetry-agent)
+echo "    容器 ID: ${cid}"
+docker inspect --format '    创建时间: {{.Created}}' "${cid}"
+docker exec "${cid}" printenv EMBEDDING_MODEL 2>/dev/null | sed 's/^/    EMBEDDING_MODEL=/'
+EOS
+}
+
 echo "==> 测试 SSH 连接 (${REMOTE})..."
 ssh "${SSH_OPTS[@]}" "${REMOTE}" "echo connected"
 
@@ -108,9 +155,10 @@ if [[ "${PULL_ONLY}" == true ]]; then
 fi
 
 if [[ "${ENV_ONLY}" == true ]]; then
+    _sync_compose_config
     _upload_prod_env
-    echo "==> 重启容器..."
-    ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh restart"
+    echo "==> 重建容器以加载新 .env.prod（force-recreate，非 restart）..."
+    _remote_recreate
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh health" || true
     echo "==> 完成: http://${ECS_HOST}/"
     exit 0
@@ -127,11 +175,7 @@ rsync -avz --delete \
     "${REMOTE}:${REMOTE_DIR}/"
 
 if [[ "${WITH_DATA}" == true ]]; then
-    echo "==> rsync 同步 data/..."
-    rsync -avz \
-        -e "${RSYNC_SSH}" \
-        "${PROJECT_ROOT}/data/" \
-        "${REMOTE}:${REMOTE_DIR}/data/"
+    _sync_data
 fi
 
 _upload_prod_env

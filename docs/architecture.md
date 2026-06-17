@@ -277,7 +277,7 @@ flowchart TB
     User[浏览器] --> Nginx[Nginx :80<br/>SSE 反代]
     Nginx --> App[FastAPI App :8000<br/>含 frontend/dist]
 
-    subgraph DockerCompose["docker-compose.yml"]
+    subgraph DockerCompose["docker-compose.dev.yml / docker-compose.prod.yml"]
         App
         PG[(PostgreSQL 16)]
         Redis[(Redis 7)]

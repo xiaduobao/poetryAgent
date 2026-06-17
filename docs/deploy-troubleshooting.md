@@ -22,7 +22,7 @@
 | ECS 生产 | `.env.prod` | `production` |
 
 - `deploy.sh` **只上传 `.env.prod`**，不再碰本地 `.env`
-- `docker-compose.prod.yml` 使用 `env_file: .env.prod`
+- `docker-compose.dev.yml` 使用 `env_file: .env`；`docker-compose.prod.yml` 使用 `env_file: .env.prod`
 - 生产建议独立配置：`JWT_SECRET_KEY`、`CORS_ORIGINS`（ECS IP/域名）、`LANGSMITH_PROJECT=poetry-agent-prod`
 
 ### 常用命令
@@ -209,7 +209,7 @@ docker run --rm <image> pip list | grep -i nvidia
 
 ### 解决方案
 - 多阶段 Dockerfile + 装完依赖后 nvidia 包检测失败则 exit 1
-- `.dockerignore` 排除 `data/`、`.env` 等
+- `.dockerignore` 排除 `data/`、`.env`、`.env.prod` 等
 
 ### 状态
 - [x] 已解决（2026-06-16）
@@ -289,6 +289,59 @@ sudo nginx -t && sudo systemctl reload nginx
 | `docker compose exec` 报 no configuration file | 不在项目目录 | 先 `cd /opt/poetry-agent` |
 | 混合检索很慢（10s+） | 冷启动加载模型 | 预下载模型到 `data/models/`，生产同步 `--with-data` |
 | ECS 查看 Postgres | PG 在 Docker 内 | `docker exec -it poetry-agent-postgres-1 psql -U poetry -d poetry_agent` |
+| Redis `(unhealthy)` | AOF 损坏 / 磁盘满 / 仍在加载 | 见下方 **§13** |
+
+---
+
+## 13. Redis 容器 unhealthy
+
+### 现象
+
+```text
+poetry-agent-redis-1   Up ... (unhealthy)   6379/tcp
+```
+
+`poetry-agent` 依赖 `redis: condition: service_healthy`，Redis 不健康时 **App 不会启动**。
+
+### 诊断（SSH 到 ECS 后）
+
+```bash
+cd /opt/poetry-agent   # 或实际部署目录
+
+# 健康检查详情（看 Last output）
+docker inspect poetry-agent-redis-1 --format='{{range .State.Health.Log}}{{.Output}}{{end}}' | tail -5
+
+docker compose logs redis --tail=80
+docker compose exec redis redis-cli ping    # 期望 PONG；LOADING / 无响应则见下
+
+df -h .
+ls -la data/redis/
+```
+
+### 常见原因与处理
+
+| 日志 / 现象 | 原因 | 处理 |
+|-------------|------|------|
+| `Bad file format reading the append only file` | AOF 损坏（异常断电等） | 见下方「修复 AOF」 |
+| `redis-cli ping` → `LOADING` | AOF 较大，仍在载入 | 等待 1～5 分钟；仍失败则查日志 |
+| `No space left on device` | 磁盘满 | `df -h` 清理空间后 `docker compose restart redis` |
+| `Permission denied` on `/data` | `data/redis` 权限不对 | `sudo chown -R 999:999 data/redis` 后重启 |
+| 日志无报错但 ping 失败 | Redis 进程已挂 | `docker compose restart redis`；仍失败则重建容器 |
+
+#### 修复 AOF（会丢失未持久化的一小段写入，Checkpoint 可重建）
+
+```bash
+cd /opt/poetry-agent
+docker compose stop redis
+cp -a data/redis data/redis.bak.$(date +%Y%m%d)
+
+docker run --rm -v "$(pwd)/data/redis:/data" redis:7-alpine \
+  redis-check-aof --fix /data/appendonly.aof
+
+docker compose up -d redis
+docker compose exec redis redis-cli ping   # 确认 PONG
+docker compose ps
+```
 
 ---
 
@@ -312,9 +365,114 @@ sudo nginx -t && sudo systemctl reload nginx
 | `.env` | 本地开发环境变量 |
 | `.env.prod` | ECS 生产环境变量（deploy 上传） |
 | `scripts/deploy/deploy.env` | ECS SSH、ACR 镜像地址 |
-| `docker-compose.yml` | 本地 dev（可 build） |
-| `docker-compose.prod.yml` | ECS prod（只 pull ACR 镜像） |
+| `docker-compose.dev.yml` | 本地 dev（可 build，`.env`） |
+| `docker-compose.prod.yml` | ECS prod（只 pull ACR 镜像，`.env.prod`） |
 | `Dockerfile` | ACR 云构建 / 备用本地 build |
 | `scripts/deploy/deploy.sh` | 一键发布到 ECS |
 | `docs/project-notes.md` | 通用问答自动记录 |
 | `.cursor/skills/poetry-deploy-journal/SKILL.md` | Agent 自动保存问答到文档 |
+
+---
+
+## 2026-06-17 · Docker 构建是否会打包 .env.prod
+
+**问**：`docker build` 会不会把生产环境配置（`.env.prod`）打进镜像？
+
+**答**：会（修复前）。`.dockerignore` 原先只排除 `.env`，`Dockerfile` 里 `COPY . .` 会把本地存在的 `.env.prod` 一并复制进镜像层，存在密钥泄露风险。
+
+生产运行时不受影响：`docker-compose.prod.yml` 通过 `env_file: .env.prod` 在 ECS 上挂载，`deploy.sh` 单独 scp 上传，不依赖镜像内配置。
+
+**修复**：在 `.dockerignore` 增加 `.env.prod`（与 `.env`、`scripts/deploy/deploy.env` 一致）。
+
+**标签**：`docker` | `config`
+
+---
+
+## 2026-06-17 · docker-compose dev / prod 分离
+
+**问**：将 docker-compose 两个文件分离开，一个是 dev 一个是 prod。
+
+**答**：不再使用「base + override」合并模式。现改为两个独立完整栈：
+
+| 文件 | 场景 | 要点 |
+|------|------|------|
+| `docker-compose.dev.yml` | 本地开发 | `build: .`，`env_file: .env`，`APP_ENV=development` |
+| `docker-compose.prod.yml` | ECS 生产 | ACR 镜像、`env_file: .env.prod`，`pull_policy: always` |
+
+已删除原 `docker-compose.yml`。`remote-compose.sh` 按 `.compose.env` 中是否有 `POETRY_AGENT_IMAGE` 自动选 prod / dev 文件。
+
+```bash
+# 本地
+docker compose -f docker-compose.dev.yml up --build
+
+# ECS（或本地模拟 prod）
+docker compose -f docker-compose.prod.yml up -d --no-build --pull always
+```
+
+**标签**：`docker` | `deploy` | `config`
+
+---
+
+## 2026-06-17 · 容器启动不再每次重建向量索引
+
+**问**：不想每次启动都 rebuild index。
+
+**答**：`Dockerfile` 原先 `CMD` 在 uvicorn 前执行 `build_index.py`（`force=True`），每次容器启动都会全量重建 Chroma，耗时长。
+
+`app/main.py` lifespan 已调用 `build_vector_store()`：**有索引则加载，无索引才构建**。已从 `Dockerfile` 移除启动时 `build_index.py`。
+
+需手动重建索引时：
+
+```bash
+docker compose -f docker-compose.dev.yml exec poetry-agent python scripts/build_index.py
+# 或 ECS：./scripts/deploy/remote-compose.sh 登录后同样 exec
+```
+
+**标签**：`docker` | `rag`
+
+---
+
+## 2026-06-17 · ECS data/ 目录权限混乱（501 vs 1000）
+
+**问**：`data/` 下文件属主混杂（`501 staff`、`1000:1000`、`70`、`lxd`），需要修正权限。
+
+**答**：Mac `rsync --with-data` 会保留本地 uid `501`，而 `poetry-agent` 容器以 `uid 1000`（appuser）运行，无法写入 `chroma_db` / `sessions.db` 等。
+
+| 路径 | 应有属主 | 说明 |
+|------|----------|------|
+| `corpus/`、`chroma_db/`、`models/`、`sessions.db`、`authors.json` | `1000:1000` | poetry-agent 容器 |
+| `postgres/` | `70` | postgres:16-alpine |
+| `redis/` | `999:999` | redis:7-alpine |
+
+**一次性修复（SSH 登录 ECS）**：
+
+```bash
+cd /opt/poetry-agent
+sudo ./scripts/deploy/fix-data-permissions.sh
+# 或
+sudo ./scripts/deploy/remote-compose.sh fix-perms
+```
+
+**后续部署**：`deploy.sh --with-data` 已自动 `rsync --chown=1000:1000`（排除 postgres/redis）并执行权限修复。
+
+**标签**：`deploy` | `docker` | `config`
+
+---
+
+## 2026-06-17 · Postgres checkpointer 回退 MemorySaver（缺 psycopg/libpq）
+
+**问**：启动日志 `Postgres checkpointer unavailable, using memory: no pq wrapper available` / `libpq library not found`。
+
+**答**：`langgraph-checkpoint-postgres` 依赖 **psycopg3**，但 `requirements.txt` 未安装带 libpq 的实现。`python:3.11-slim` 镜像也无系统 `libpq`。
+
+**修复**：在 `requirements.txt` 增加：
+
+```text
+psycopg[binary]>=3.1.18,<4
+```
+
+`[binary]` 会安装预编译的 `psycopg_binary`，无需在 Dockerfile 里 apt 安装 `libpq`。
+
+重建镜像并部署后，日志应出现 `Using Postgres checkpointer`。
+
+**标签**：`docker` | `config` | `rag`

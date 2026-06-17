@@ -11,6 +11,7 @@ venv/
 .python-version
 
 .env
+.env.prod
 scripts/deploy/deploy.env
 
 # 运行时挂载，不打进镜像
