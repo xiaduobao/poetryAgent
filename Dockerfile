@@ -1,10 +1,10 @@
 # 供 ACR 云构建 / ECS docker build 使用
-# 基础镜像走阿里云 Docker Hub 加速：registry.aliyuncs.com/library/
-# 若加速地址不可用，可传 build-arg 改用 Docker Hub 或个人 ACR 同步镜像：
-#   --build-arg NODE_IMAGE=node:20-slim
-#   --build-arg PYTHON_IMAGE=python:3.11-slim
-ARG NODE_IMAGE=registry.aliyuncs.com/library/node:20-slim
-ARG PYTHON_IMAGE=registry.aliyuncs.com/library/python:3.11-slim
+# 基础镜像默认 Docker Hub 官方（ACR 云构建可拉取）
+# 国内 ECS 本地 build 若 docker.io 慢，可传 build-arg 换镜像源，例如 DaoCloud：
+#   --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:20-slim
+#   --build-arg PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
+ARG NODE_IMAGE=node:20-slim
+ARG PYTHON_IMAGE=python:3.11-slim
 
 # ---- Frontend build ----
 FROM ${NODE_IMAGE} AS frontend-build
