@@ -43,6 +43,11 @@ services:
       - CORPUS_DIR=/app/data/corpus
       - APP_ENV=production
     volumes:
+      # 模型、语料、向量库单独挂载（与 .env.prod 中 /app/data/... 路径一致）
+      - ./data/models:/app/data/models:ro
+      - ./data/corpus:/app/data/corpus
+      - ./data/chroma_db:/app/data/chroma_db
+      # sessions.db、authors.json 等其余 data/ 文件
       - ./data:/app/data
     depends_on:
       postgres:

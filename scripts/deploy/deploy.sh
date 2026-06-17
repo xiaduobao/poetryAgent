@@ -8,6 +8,8 @@ DEPLOY_ENV="${SCRIPT_DIR}/deploy.env"
 PROD_ENV="${PROJECT_ROOT}/.env.prod"
 
 WITH_DATA=false
+WITH_MODELS=false
+MODELS_ONLY=false
 ENV_ONLY=false
 PULL_ONLY=false
 
@@ -18,16 +20,20 @@ usage() {
 镜像在 ACR 构建完成后，用本脚本部署到 ECS（只 pull，不 build）。
 
 选项:
-  --with-data   额外同步 data/（语料、向量库、模型、postgres/redis 数据目录）
-  --env-only    仅更新远端 .env.prod 并重建 poetry-agent 容器（不 pull 镜像）
-  --pull        仅拉取 ACR 最新镜像并重启
-  -h, --help    显示帮助
+  --with-data     额外同步 data/（语料、向量库、模型；不含 postgres/redis）
+  --with-models   额外同步 data/models/（可与 --with-data 合用）
+  --models-only   仅同步 models 并重建 poetry-agent（不 rsync 代码、不 pull 镜像）
+  --env-only      仅更新远端 .env.prod 并重建 poetry-agent 容器（不 pull 镜像）
+  --pull          仅拉取 ACR 最新镜像并重启
+  -h, --help      显示帮助
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --with-data) WITH_DATA=true; shift ;;
+        --with-models) WITH_MODELS=true; shift ;;
+        --models-only) MODELS_ONLY=true; shift ;;
         --env-only) ENV_ONLY=true; shift ;;
         --pull) PULL_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -66,10 +72,10 @@ fi
 REMOTE="${ECS_USER}@${ECS_HOST}"
 RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 
-_fix_app_data_permissions() {
-    echo "==> 修正 data/ 目录权限（app=1000, postgres=70, redis=999）..."
-    ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && bash scripts/deploy/fix-data-permissions.sh"
-}
+# _fix_app_data_permissions() {
+#     echo "==> 修正 data/ 目录权限（app=1000, postgres=70, redis=999）..."
+#     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && bash scripts/deploy/fix-data-permissions.sh"
+# }
 
 _sync_data() {
     echo "==> rsync 同步 data/（排除 postgres/redis，属主映射为 1000:1000）..."
@@ -80,7 +86,19 @@ _sync_data() {
         -e "${RSYNC_SSH}" \
         "${PROJECT_ROOT}/data/" \
         "${REMOTE}:${REMOTE_DIR}/data/"
-    _fix_app_data_permissions
+}
+
+_sync_models() {
+    if [[ ! -d "${PROJECT_ROOT}/data/models" ]] || [[ -z "$(ls -A "${PROJECT_ROOT}/data/models" 2>/dev/null)" ]]; then
+        echo "本地 data/models/ 为空，请先执行: python scripts/download_models.py" >&2
+        exit 1
+    fi
+    echo "==> rsync 同步 data/models/（约数百 MB，请耐心等待）..."
+    rsync -avz --progress \
+        --chown=1000:1000 \
+        -e "${RSYNC_SSH}" \
+        "${PROJECT_ROOT}/data/models/" \
+        "${REMOTE}:${REMOTE_DIR}/data/models/"
 }
 
 _upload_prod_env() {
@@ -157,9 +175,26 @@ fi
 if [[ "${ENV_ONLY}" == true ]]; then
     _sync_compose_config
     _upload_prod_env
+    #_fix_app_data_permissions
     echo "==> 重建容器以加载新 .env.prod（force-recreate，非 restart）..."
     _remote_recreate
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh health" || true
+    echo "==> 完成: http://${ECS_HOST}/"
+    exit 0
+fi
+
+if [[ "${MODELS_ONLY}" == true ]]; then
+    _sync_models
+   # _fix_app_data_permissions
+    echo "==> 重建 poetry-agent 以重新挂载 models..."
+    _remote_recreate
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" bash -s "${REMOTE_DIR}" <<'EOS'
+cd "$1"
+echo "==> ECS 上 models 目录:"
+ls -la data/models/
+cid=$(docker compose -f docker-compose.prod.yml ps -q poetry-agent)
+docker exec "${cid}" ls -la /app/data/models/ 2>/dev/null || true
+EOS
     echo "==> 完成: http://${ECS_HOST}/"
     exit 0
 fi
@@ -176,7 +211,11 @@ rsync -avz --delete \
 
 if [[ "${WITH_DATA}" == true ]]; then
     _sync_data
+elif [[ "${WITH_MODELS}" == true ]]; then
+    _sync_models
 fi
+
+# _fix_app_data_permissions
 
 _upload_prod_env
 _remote_pull_up

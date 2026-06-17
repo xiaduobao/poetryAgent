@@ -467,7 +467,7 @@ sudo ./scripts/deploy/fix-data-permissions.sh
 sudo ./scripts/deploy/remote-compose.sh fix-perms
 ```
 
-**后续部署**：`deploy.sh --with-data` 已自动 `rsync --chown=1000:1000`（排除 postgres/redis）并执行权限修复。
+**后续部署**：`deploy.sh` 在每次 rsync 同步后自动执行 `fix-data-permissions.sh`（含普通发布与 `--env-only`）；`--with-data` 亦同。需 ECS SSH 用户为 root（`deploy.env` 默认 `ECS_USER=root`）。
 
 **标签**：`deploy` | `docker` | `config`
 
@@ -521,3 +521,248 @@ python scripts/download_models.py && ./scripts/deploy/deploy.sh --with-data
 代码侧：启动时 `warmup_rag_models()` 预加载 embedding / rerank；`resolve_model_path()` 只认本地目录，路径错误会在启动日志打印 `env=` / `resolved=` 并直接失败，不会回落 HuggingFace 远端。
 
 **标签**：`deploy` | `rag` | `config`
+
+---
+
+## 2026-06-17 · 部署不同步 Postgres / Redis
+
+**问**：`deploy.sh --with-data` 会不会把本地 Postgres / Redis 同步到 ECS，覆盖生产数据？
+
+**答**：**不会，也不应同步。** 生产库只在 ECS 的 `data/postgres/`、`data/redis/` 维护。
+
+| 机制 | 说明 |
+|------|------|
+| `.rsyncignore` | 排除 `data/postgres/`、`data/redis/`，主 rsync（含 `--delete`）永不碰这两目录 |
+| `--with-data` | `_sync_data()` 仅同步语料、向量库、模型等，同样 `--exclude postgres/`、`--exclude redis/` |
+
+日常发布：
+
+```bash
+./scripts/deploy/deploy.sh              # 只同步代码/配置，不动 data/
+./scripts/deploy/deploy.sh --with-data  # 仅同步 chroma_db、models、corpus 等
+```
+
+**标签**：`deploy` | `docker` | `config`
+
+---
+
+## 2026-06-17 · Postgres UndefinedFileError（数据目录损坏）
+
+**问**：应用报错 `asyncpg.exceptions.UndefinedFileError: could not open file "base/16384/16389": No such file or directory`。
+
+**答**：这是 **PostgreSQL 数据文件损坏或缺失**，不是应用代码问题。`base/16384/` 是 `poetry_agent` 库的 OID 目录，`16389` 是某张表/索引的数据文件，磁盘上已不存在但 catalog 仍引用它。
+
+**常见原因**：
+
+| 原因 | 说明 |
+|------|------|
+| 磁盘满 | 写入中断导致文件不完整 |
+| 权限错误 | `data/postgres` 属主不是 `70:70`，Postgres 无法正确读写 |
+| 异常停机 | `kill -9`、ECS 强制重启、断电 |
+| 误操作 | 手动删改 `data/postgres/` 内文件，或曾用 rsync 覆盖（本项目已排除，但仍需排查） |
+
+**排查（SSH 登录 ECS）**：
+
+```bash
+cd /opt/poetry-agent
+
+# 1. 磁盘空间
+df -h .
+
+# 2. postgres 目录权限（应为 70:70，chmod 700）
+ls -la data/postgres/
+sudo ./scripts/deploy/remote-compose.sh fix-perms
+
+# 3. postgres 容器日志
+docker compose -f docker-compose.prod.yml logs postgres --tail=50
+
+# 4. 尝试连库（若也失败则确认损坏）
+docker exec -it poetry-agent-postgres-1 psql -U poetry -d poetry_agent -c '\dt'
+```
+
+**修复 A — 可接受丢数据（最常见）**：
+
+会话/消息可重建时，清空 Postgres 数据目录并重新初始化：
+
+```bash
+cd /opt/poetry-agent
+docker compose -f docker-compose.prod.yml down
+
+# 备份损坏目录（可选）
+sudo mv data/postgres data/postgres.bak.$(date +%Y%m%d)
+
+# 重建空库
+sudo mkdir -p data/postgres
+sudo chown -R 70:70 data/postgres
+sudo chmod 700 data/postgres
+
+docker compose -f docker-compose.prod.yml up -d
+# 启动后 poetry-agent 会自动 alembic upgrade head
+```
+
+**修复 B — 需保留数据**：
+
+若曾做过 `pg_dump` 备份，恢复备份；否则只能尝试 `pg_resetwal` / 专业恢复工具，成功率低。**生产环境应定期备份**：
+
+```bash
+docker exec poetry-agent-postgres-1 pg_dump -U poetry poetry_agent > backup.sql
+```
+
+**预防**：
+
+- 部署脚本已排除 `data/postgres/`，不要用 `--with-data` 或 rsync 覆盖生产库
+- 定期 `pg_dump`；ECS 磁盘告警
+- 权限：`fix-data-permissions.sh` 只改 `postgres/` 为 uid `70`
+
+**标签**：`deploy` | `docker` | `config`
+
+---
+
+## 2026-06-17 · 生产 compose 显式挂载 models
+
+**问**：`docker-compose.prod.yml` 没有把模型目录映射进容器。
+
+**答**：原先仅 `./data:/app/data` 整目录挂载，models 虽在其中但不直观，且 `.env.prod` 用相对路径 `./data/models/...` 与 `CHROMA_PERSIST_DIR=/app/data/...` 不一致。
+
+**修复**（`docker-compose.prod.yml`）：
+
+```yaml
+volumes:
+  - ./data/models:/app/data/models:ro
+  - ./data/corpus:/app/data/corpus
+  - ./data/chroma_db:/app/data/chroma_db
+  - ./data:/app/data
+```
+
+`.env.prod` 中模型路径改为容器绝对路径，例如：
+
+```bash
+EMBEDDING_MODEL=/app/data/models/bge-small-zh-v1.5
+RERANK_MODEL=/app/data/models/bge-reranker-base
+```
+
+**同步模型到 ECS**（首次或更新模型）：
+
+```bash
+python scripts/download_models.py
+./scripts/deploy/deploy.sh --with-data
+./scripts/deploy/deploy.sh --env-only   # 上传 .env.prod
+# ECS 上重建容器
+ssh ecs 'cd /opt/poetry-agent && ./scripts/deploy/remote-compose.sh recreate'
+```
+
+**校验**：
+
+```bash
+docker exec poetry-agent-poetry-agent-1 ls -la /app/data/models/
+docker exec poetry-agent-poetry-agent-1 printenv EMBEDDING_MODEL
+```
+
+**标签**：`deploy` | `docker` | `config`
+
+---
+
+## 2026-06-17 · 容器内 models 为空（本地未同步）
+
+**问**：compose 已配置 `./data/models:/app/data/models:ro`，容器内仍看不到模型。
+
+**答**：挂载只映射**宿主机已有文件**；ECS 上 `data/models/` 为空时，容器内也是空的（bind mount 会遮盖镜像内同路径内容）。普通 `deploy.sh` **不会**同步 models——`.rsyncignore` 排除了 `data/models/`（体积大，避免每次发布都传）。
+
+**同步模型到 ECS**：
+
+```bash
+# 本地先确认有模型
+ls data/models/
+
+# 方式 1：仅同步 models（推荐，最快）
+./scripts/deploy/deploy.sh --models-only
+
+# 方式 2：同步全部 data（含 chroma_db、corpus、models）
+./scripts/deploy/deploy.sh --with-data
+
+# 方式 3：发布代码同时带 models
+./scripts/deploy/deploy.sh --with-models
+```
+
+**`.env.prod` 路径须与 ECS 上实际目录名一致**（本机示例）：
+
+```bash
+EMBEDDING_MODEL=/app/data/models/bge-small-zh-v1.5
+RERANK_MODEL=/app/data/models/BAAI--bge-reranker-base
+```
+
+**校验**：
+
+```bash
+# ECS 宿主机
+ls -la /opt/poetry-agent/data/models/
+
+# 容器内
+docker exec poetry-agent-poetry-agent-1 ls -la /app/data/models/
+```
+
+**标签**：`deploy` | `docker` | `rag`
+
+---
+
+## 2026-06-17 · deploy 同步后自动 fix-data-permissions
+
+**问**：为什么 deploy 同步之后不马上执行 `fix-data-permissions.sh`？
+
+**答**：原先逻辑有疏漏——仅在 `--with-data` 的 `_sync_data()` 末尾调用；普通 `./scripts/deploy/deploy.sh`（只 rsync 代码）不会修正权限，可能导致 postgres（uid 70）、app（uid 1000）读写失败。
+
+**现行为**：任意 rsync 同步完成后、启动/重建容器**之前**，统一执行：
+
+```bash
+_fix_app_data_permissions   # 远端 fix-data-permissions.sh
+```
+
+覆盖：`deploy.sh`（默认）、`--with-data`、`--env-only`。`--pull` 不同步文件，不触发。
+
+**标签**：`deploy` | `docker` | `config`
+
+---
+
+## 2026-06-17 · 查询容器/镜像构建参数
+
+**问**：如何查询容器 `93c587dbc07b` 的构建参数？
+
+**答**：Docker **不会把 `ARG` 构建参数存进容器**；只能查容器运行配置，或从镜像元数据间接推断。
+
+**1. 容器基本信息（镜像 ID、环境变量、挂载等）**：
+
+```bash
+docker inspect 93c587dbc07b
+docker inspect --format='镜像: {{.Config.Image}}
+创建: {{.Created}}
+Env: {{range .Config.Env}}{{.}}
+{{end}}' 93c587dbc07b
+```
+
+**2. 从容器反查镜像，再看镜像层与标签**：
+
+```bash
+IMAGE=$(docker inspect --format='{{.Config.Image}}' 93c587dbc07b)
+docker image inspect "$IMAGE"
+docker history --no-trunc "$IMAGE"
+```
+
+**3. 本项目 Dockerfile 的 ARG（默认值，构建时可覆盖）**：
+
+| ARG | 默认值 |
+|-----|--------|
+| `NODE_IMAGE` | `docker.m.daocloud.io/library/node:20-slim` |
+| `PYTHON_IMAGE` | `docker.m.daocloud.io/library/python:3.11-slim` |
+| `TORCH_CPU_VERSION` | `2.5.1` |
+
+ACR 云构建若在控制台传了 build-arg，以 **ACR 构建记录** 为准，容器内查不到。
+
+**4. ECS 上查 poetry-agent 容器**：
+
+```bash
+docker ps -a | grep poetry
+docker inspect poetry-agent-poetry-agent-1
+docker inspect --format='{{.Config.Image}}' poetry-agent-poetry-agent-1
+```
+
+**标签**：`deploy` | `docker`

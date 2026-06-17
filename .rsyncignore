@@ -20,6 +20,9 @@ frontend/node_modules/
 frontend/dist/
 
 # 默认不同步 data/，使用 deploy.sh --with-data 显式同步
+# postgres/redis 永不同步：生产库仅在 ECS 本地维护，避免覆盖
+data/postgres/
+data/redis/
 data/chroma_db/
 data/sessions.db
 data/models/
