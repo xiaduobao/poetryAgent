@@ -76,14 +76,14 @@ export function AppLayout() {
     [messages, streaming],
   )
 
-  const handleSend = async (text: string) => {
+  const handleSend = async (text: string, imageBase64?: string) => {
     let sessionId = activeId
     if (!sessionId) {
       const session = await createSession()
       sessionId = session.id
       setActiveId(sessionId)
     }
-    await sendMessage(sessionId, text)
+    await sendMessage(sessionId, text, imageBase64)
     refresh(query || undefined)
   }
 

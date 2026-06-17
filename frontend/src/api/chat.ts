@@ -26,19 +26,25 @@ async function fetchStream(
   callbacks: StreamCallbacks,
   signal: AbortSignal,
   retry = true,
+  imageBase64?: string,
 ): Promise<Response | null> {
   const token = await getValidToken()
   const headers: Record<string, string> = { "Content-Type": "application/json" }
   if (token) headers.Authorization = `Bearer ${token}`
 
+  const body: Record<string, string | null> = {
+    message,
+    session_id: sessionId,
+    thread_id: sessionId || "default",
+  }
+  if (imageBase64) {
+    body.image_base64 = imageBase64
+  }
+
   const res = await fetch("/api/v1/chat/stream", {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      message,
-      session_id: sessionId,
-      thread_id: sessionId || "default",
-    }),
+    body: JSON.stringify(body),
     signal,
   })
 
@@ -50,7 +56,7 @@ async function fetchStream(
     }
     const newToken = await refreshAccessToken()
     if (newToken) {
-      return fetchStream(sessionId, message, callbacks, signal, false)
+      return fetchStream(sessionId, message, callbacks, signal, false, imageBase64)
     }
     clearTokens()
     callbacks.onError?.("登录已过期，请重新登录")
@@ -65,6 +71,7 @@ export function streamChat(
   message: string,
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
+  imageBase64?: string,
 ): StreamHandle {
   const controller = new AbortController()
   const combinedSignal = signal
@@ -72,7 +79,14 @@ export function streamChat(
     : controller.signal
 
   const promise = (async () => {
-    const res = await fetchStream(sessionId, message, callbacks, combinedSignal)
+    const res = await fetchStream(
+      sessionId,
+      message,
+      callbacks,
+      combinedSignal,
+      true,
+      imageBase64,
+    )
     if (!res) return
 
     if (!res.ok) {

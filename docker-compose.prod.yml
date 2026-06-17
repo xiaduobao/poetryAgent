@@ -1,0 +1,6 @@
+# 生产环境覆盖：从 ACR 拉取镜像，不在 ECS 上 build
+# 用法：POETRY_AGENT_IMAGE=registry.cn-xxx.aliyuncs.com/ns/poetry-agent:latest \
+#       docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build --pull always
+services:
+  poetry-agent:
+    pull_policy: always

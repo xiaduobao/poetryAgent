@@ -30,6 +30,7 @@ services:
     restart: unless-stopped
 
   poetry-agent:
+    image: ${POETRY_AGENT_IMAGE:-poetry-agent-poetry-agent:latest}
     build: .
     ports:
       - "127.0.0.1:8000:8000"
