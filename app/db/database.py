@@ -141,32 +141,44 @@ def _run_alembic_subprocess() -> None:
         raise RuntimeError(f"alembic upgrade failed: {detail}")
 
 
-def run_alembic_upgrade() -> None:
-    command.upgrade(_alembic_config(), "head")
+async def _postgres_current_revision() -> str | None:
+    engine = get_engine()
+    async with engine.connect() as conn:
+        exists = await conn.execute(
+            text(
+                "SELECT EXISTS ("
+                " SELECT FROM information_schema.tables"
+                " WHERE table_schema = 'public' AND table_name = 'alembic_version'"
+                ")"
+            )
+        )
+        if not exists.scalar():
+            return None
+        result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+        row = result.fetchone()
+        return str(row[0]) if row else None
 
 
 async def init_db() -> None:
     await _dispose_engine()
 
-    if _is_sqlite():
-        current = _sqlite_current_revision()
-        if current == HEAD_REVISION:
-            logger.info("SQLite schema already at revision %s, skip migration.", HEAD_REVISION)
-            return
-        if current:
-            logger.info("SQLite at revision %s, upgrading to head.", current)
+    backend = "SQLite" if _is_sqlite() else "PostgreSQL"
+    current = _sqlite_current_revision() if _is_sqlite() else await _postgres_current_revision()
+    if current == HEAD_REVISION:
+        logger.info("%s schema already at revision %s, skip migration.", backend, HEAD_REVISION)
+        return
+    if current:
+        logger.info("%s at revision %s, upgrading to head.", backend, current)
 
+    if _is_sqlite():
         await asyncio.to_thread(_maybe_stamp_legacy_schema_sync)
         current = _sqlite_current_revision()
         if current == HEAD_REVISION:
             logger.info("SQLite schema stamped at head.")
             return
 
-        logger.info("Running alembic upgrade in subprocess...")
-        await asyncio.to_thread(_run_alembic_subprocess)
-    else:
-        await asyncio.to_thread(run_alembic_upgrade)
-
+    logger.info("Running alembic upgrade in subprocess...")
+    await asyncio.to_thread(_run_alembic_subprocess)
     logger.info("Database migrations applied.")
 
 

@@ -6,6 +6,7 @@ export const PROMPT_EXAMPLES = [
   "推荐几首关于思乡的诗",
   "「渚清沙白」中的「渚」是什么意思？",
   "帮我写一首关于春天的五言绝句",
+  "上传风景照，写一首五言绝句",
 ]
 
 const INTENT_FOLLOW_UPS: Record<string, string[]> = {

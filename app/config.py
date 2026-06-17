@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_model: str = "qwen-plus"
+    vision_model: str = "qwen-vl-max"
 
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     rerank_model: str = "BAAI/bge-reranker-base"
