@@ -15,9 +15,9 @@ if [[ -f "${PROJECT_DIR}/.compose.env" ]]; then
     set +a
 fi
 
-COMPOSE_FILES=(-f docker-compose.yml)
+COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.prod.yml)
 if [[ -n "${POETRY_AGENT_IMAGE:-}" ]]; then
-    COMPOSE_FILES+=(-f docker-compose.prod.yml)
+    export POETRY_AGENT_IMAGE
 fi
 
 compose() {

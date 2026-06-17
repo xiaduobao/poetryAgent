@@ -8,9 +8,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
+def _resolve_env_file() -> Path:
+    """本地 dev 用 .env，生产用 .env.prod（可通过 ENV_FILE 覆盖）。"""
+    override = os.getenv("ENV_FILE", "").strip()
+    if override:
+        return ROOT_DIR / override
+    if os.getenv("APP_ENV", "").lower() in ("production", "prod"):
+        prod = ROOT_DIR / ".env.prod"
+        if prod.exists():
+            return prod
+    return ROOT_DIR / ".env"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=ROOT_DIR / ".env",
+        env_file=_resolve_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
     )

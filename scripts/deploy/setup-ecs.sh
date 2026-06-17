@@ -147,6 +147,6 @@ REMOTE_SETUP
 echo ""
 echo "==> setup-ecs 完成"
 echo "下一步:"
-echo "  1. 配置本地 .env（DashScope API Key 等）"
+echo "  1. 配置本地 .env.prod（cp .env.prod.example .env.prod，DashScope API Key 等）"
 echo "  2. 首次发布: ./scripts/deploy/deploy.sh --with-data"
 echo "  3. 访问: http://${ECS_HOST}/"
