@@ -64,12 +64,18 @@ async def lifespan(app: FastAPI):
     await init_db()
     await setup_checkpointer()
     logger.info("Database ready.")
+    logger.info("Loading RAG models (local only)...")
+    from app.rag.embedder import warmup_rag_models
+
+    warmup_rag_models(settings)
     logger.info("Building / loading vector store...")
-    try:
-        build_vector_store()
-        logger.info("Vector store ready.")
-    except Exception as e:
-        logger.warning("Vector store init skipped or failed: %s", e)
+    build_vector_store()
+    logger.info("Vector store ready.")
+    logger.info("Warming up hybrid retriever...")
+    from app.rag.retriever import get_hybrid_retriever
+
+    get_hybrid_retriever()
+    logger.info("Hybrid retriever ready.")
     yield
 
 

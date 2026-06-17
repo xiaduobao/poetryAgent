@@ -432,7 +432,21 @@ docker compose -f docker-compose.dev.yml exec poetry-agent python scripts/build_
 
 ---
 
-## 2026-06-17 · ECS data/ 目录权限混乱（501 vs 1000）
+## 2026-06-17 · 向量索引重建是否会重复入库
+
+**问**：向量数据库重建索引是不是每次都是增加数据，然后有很多重复？
+
+**答**：
+- **正常启动**（`uvicorn` / 容器）：`build_vector_store()` 默认 `force=False`，`data/chroma_db` 已有数据则**只加载，不写入**，不会重复。
+- **手动重建**（`python scripts/build_index.py`、语料上传/删除 API）：调用 `build_vector_store(force=True)`，当前实现**不会先清空**旧库，而是在已有 collection 上 `add_texts`，**会重复入库**（条数约翻倍）。
+- **正确重建**：先删旧库再建索引：
+
+```bash
+rm -rf data/chroma_db
+python scripts/build_index.py
+```
+
+**标签**：`rag`
 
 **问**：`data/` 下文件属主混杂（`501 staff`、`1000:1000`、`70`、`lxd`），需要修正权限。
 
@@ -476,3 +490,34 @@ psycopg[binary]>=3.1.18,<4
 重建镜像并部署后，日志应出现 `Using Postgres checkpointer`。
 
 **标签**：`docker` | `config` | `rag`
+
+---
+
+## 2026-06-17 · stream agent error：Embedding 加载失败（路径错误 + HF client closed）
+
+**问**：聊天时报 `stream agent error`，堆栈在 `get_embeddings()` → `hf_hub_download`，最终 `RuntimeError: Cannot send a request, as the client has been closed`。
+
+**答**：根因通常是 **`.env.prod` 中 `EMBEDDING_MODEL` 路径与 ECS 上 `data/models/` 实际目录名不一致**（如写成 `BAAI-bge-*` 单横线，而 `download_models.py` 生成的是 `BAAI--bge-*` 双横线）。本地目录找不到时，`sentence-transformers` 会尝试从 HuggingFace 拉取，容器内网络/镜像问题则表现为 `client has been closed`。
+
+**排查**：
+
+```bash
+ls -la /opt/poetry-agent/data/models/
+docker exec <poetry-agent容器> printenv EMBEDDING_MODEL
+```
+
+**修复**：
+
+```bash
+# .env.prod 与 download_models 输出一致
+EMBEDDING_MODEL=./data/models/BAAI--bge-small-zh-v1.5
+RERANK_MODEL=./data/models/BAAI--bge-reranker-base
+
+./scripts/deploy/deploy.sh --env-only
+# 若缺模型目录
+python scripts/download_models.py && ./scripts/deploy/deploy.sh --with-data
+```
+
+代码侧：启动时 `warmup_rag_models()` 预加载 embedding / rerank；`resolve_model_path()` 只认本地目录，路径错误会在启动日志打印 `env=` / `resolved=` 并直接失败，不会回落 HuggingFace 远端。
+
+**标签**：`deploy` | `rag` | `config`

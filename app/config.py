@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     llm_model: str = "qwen-plus"
     vision_model: str = "qwen-vl-max"
 
-    embedding_model: str = "BAAI/bge-small-zh-v1.5"
-    rerank_model: str = "BAAI/bge-reranker-base"
+    embedding_model: str = "./data/models/bge-small-zh-v1.5"
+    rerank_model: str = "./data/models/BAAI--bge-reranker-base"
     hf_endpoint: str = ""
 
     chroma_persist_dir: str = str(ROOT_DIR / "data" / "chroma_db")
@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     chunk_overlap_tokens: int = 100
     retrieval_top_k: int = 8
     rerank_top_n: int = 4
+    rerank_enabled: bool = True
+    rerank_max_candidates: int = 6
+    rerank_max_length: int = 512
+    rerank_batch_size: int = 16
 
     langsmith_api_key: str = ""
     langsmith_tracing: bool = False

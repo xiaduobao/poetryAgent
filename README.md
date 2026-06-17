@@ -32,8 +32,8 @@ FastAPI (/api/v1/chat/stream)
 | 后端 | Python 3.11 + FastAPI + SQLAlchemy 2.0 异步 |
 | 前端 | React 19 + Vite + shadcn/ui + Tailwind + AuthContext |
 | 认证 | JWT（access + refresh）+ 多租户配额 |
-| 数据 | **生产**：PostgreSQL 16 + Alembic 迁移；**本地**：SQLite（`SESSIONS_DB`） |
-| 缓存/Checkpoint | **生产**：Redis 7（Agent 记忆 + 限流计数）；**本地**：可选，未配置时降级 MemorySaver |
+| 数据 | PostgreSQL 16 + Alembic 迁移（本地 Docker 或 ECS） |
+| 缓存/Checkpoint | Redis 7（Agent 记忆 + 限流计数） |
 | 会话 | 数据库持久化 + SSE 流式输出 |
 | Agent | LangChain + LangGraph |
 | RAG | BGE-small-zh Embedding + Chroma + BM25 混合检索 + BGE-Rerank |
@@ -42,17 +42,19 @@ FastAPI (/api/v1/chat/stream)
 | 可观测 | LangSmith 追踪、Prometheus `/metrics`、Sentry、Token 用量计量 |
 | 部署 | Docker Compose（Postgres + Redis + App） |
 
-### 本地开发 vs Docker 生产
+### 本地开发 vs 全栈 Docker
 
-| 配置项 | 本地开发（默认） | Docker Compose / ECS |
-|--------|------------------|----------------------|
-| 数据库 | SQLite（`SESSIONS_DB=./data/sessions.db`） | PostgreSQL（`DATABASE_URL`） |
-| Schema | 启动时 `alembic upgrade head` | 同上（容器 CMD 先执行迁移） |
-| Agent 记忆 | MemorySaver（进程重启后丢失） | Redis 或 Postgres Checkpoint |
-| 限流 | 进程内计数 | Redis 共享计数（`RATE_LIMIT_STORAGE_URI`） |
+| 配置项 | 本地开发（推荐） | 全栈 Docker / ECS |
+|--------|------------------|---------------------|
+| Postgres / Redis | `docker compose -f docker-compose.infra.yml up -d` | 随 compose 栈一起启动 |
+| 应用进程 | 宿主机 `uvicorn --reload` | 容器内运行 |
+| 数据库连接 | `localhost:5432` / `6379`（见 `.env.example`） | 服务名 `postgres` / `redis` |
+| Schema | 启动时自动 `alembic upgrade head` | 同上 |
+| Agent 记忆 | Postgres / Redis Checkpoint | 同上 |
+| 限流 | Redis（`RATE_LIMIT_STORAGE_URI`） | 同上 |
 | 向量库 | 本地 `data/chroma_db` | 挂载 `./data` 卷 |
 
-> **说明**：本地不配 `DATABASE_URL` / `REDIS_URL` 时仍可完整跑通聊天与 RAG；多轮 Agent 记忆在重启后会重置。生产环境请使用 `docker compose -f docker-compose.dev.yml up` 获得完整持久化能力。
+> **说明**：不配 `DATABASE_URL` / `REDIS_URL` 时仍可降级为 SQLite + MemorySaver；默认 `.env.example` 已指向 Docker 基础设施，与生产行为一致。
 
 ## 快速开始
 
@@ -121,15 +123,26 @@ python scripts/download_models.py
 
 4. 或使用 [HF-Mirror 文档](https://hf-mirror.com) 中的 `huggingface-cli download`，下载后把 `.env` 里模型改为本地目录绝对路径。
 
-### 3. 启动后端
+### 3. 启动 Postgres + Redis（Docker）
+
+```bash
+docker compose -f docker-compose.infra.yml up -d
+docker compose -f docker-compose.infra.yml ps   # 确认 healthy
+```
+
+数据持久化在 `./data/postgres` 与 `./data/redis`。停止：`docker compose -f docker-compose.infra.yml down`（不加 `-v`，数据保留）。
+
+### 4. 启动后端
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+首次连接 Postgres 时会自动执行 Alembic 迁移。
+
 访问 http://localhost:8000/docs 查看 Swagger API。
 
-### 4. 启动前端（开发模式）
+### 5. 启动前端（开发模式）
 
 ```bash
 cd frontend
@@ -156,7 +169,7 @@ npm run dev
 - 图片**不持久化**；会话历史中保存的是画面描述文字，刷新后不可回看原图
 - 每次看图作诗会调用两次 LLM（视觉描述 + 诗词创作），请注意 API 用量
 
-### 5. 生产构建（前后端一体）
+### 6. 生产构建（前后端一体）
 
 ```bash
 cd frontend && npm run build && cd ..
@@ -165,7 +178,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 构建后访问 http://localhost:8000 即为聊天界面，API 仍在 `/api/v1`。
 
-### 6. Docker 部署（推荐生产）
+### 7. Docker 全栈（App + Postgres + Redis）
 
 ```bash
 docker compose -f docker-compose.dev.yml up --build
@@ -173,7 +186,7 @@ docker compose -f docker-compose.dev.yml up --build
 
 Compose 栈包含 **PostgreSQL + Redis + App**，启动时自动执行 `alembic upgrade head` 并完成数据库迁移。访问 http://localhost:8000（需先构建前端或挂载 dist）。
 
-### 7. 测试
+### 8. 测试
 
 ```bash
 # 需先 pip install -r requirements.txt
@@ -183,7 +196,7 @@ pytest tests/ -v --cov=app --cov-fail-under=40   # 与 CI 一致
 
 测试覆盖：JWT 认证、输入安全、意图规则、会话 CRUD、Chat/RAG API（Mock LLM，不消耗 API Key）。
 
-### 8. RAG 检索评估
+### 9. RAG 检索评估
 
 **简易关键词检查**（无需 LLM API）：
 
@@ -209,7 +222,7 @@ python scripts/eval_rag_ragas.py --output reports/ragas.json
 
 Golden set 位于 `tests/eval/rag_golden_set.json`，每条含 `query`、`reference`（参考答案）及可选 `author` 过滤。
 
-### 9. 部署到阿里云 ECS
+### 10. 部署到阿里云 ECS
 
 通过 SSH + rsync 将项目同步到 ECS，在远端 `docker compose build` 启动；Nginx 监听 80 端口反代到容器 `8000`。
 

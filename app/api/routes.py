@@ -242,7 +242,6 @@ async def chat_stream(
     request: Request,
     req: ChatRequest,
     user: User = Depends(require_chat_quota),
-    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     has_image = _has_image(req)
     user_text = await _sanitize_user_text(req.message)
@@ -257,12 +256,15 @@ async def chat_stream(
     filters = _build_filters(req)
     meta = {**_trace_ctx(request, user), "has_image": has_image}
 
-    session = await crud.get_session(db, thread_id, user_id=user.id)
-    if not session:
-        if thread_id not in ("default", ""):
-            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
-        session = await crud.create_session(db, user.id, title="新对话")
-        thread_id = session.id
+    factory = get_session_factory()
+    async with factory() as db_init:
+        session = await crud.get_session(db_init, thread_id, user_id=user.id)
+        if not session:
+            if thread_id not in ("default", ""):
+                raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+            session = await crud.create_session(db_init, user.id, title="新对话")
+            thread_id = session.id
+        await db_init.commit()
 
     async def event_generator() -> AsyncIterator[str]:
         full_answer = ""
