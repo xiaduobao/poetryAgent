@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # 发布到 ECS：rsync 配置与 data → scp .env.prod → 从 ACR 拉取镜像启动
-# 镜像请在 ACR 控制台手动构建，不在 ECS / 本地 build
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,10 +15,10 @@ usage() {
     cat <<'EOF'
 用法: ./scripts/deploy/deploy.sh [选项]
 
-镜像在 ACR 控制台构建完成后，用本脚本部署到 ECS（只 pull，不 build）。
+镜像在 ACR 构建完成后，用本脚本部署到 ECS（只 pull，不 build）。
 
 选项:
-  --with-data   额外同步 data/（语料、向量库、模型等）
+  --with-data   额外同步 data/（语料、向量库、模型、postgres/redis 数据目录）
   --env-only    仅更新远端 .env.prod 并重启容器
   --pull        仅拉取 ACR 最新镜像并重启
   -h, --help    显示帮助

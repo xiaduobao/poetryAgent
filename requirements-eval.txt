@@ -1,0 +1,5 @@
+# Ragas RAG 评估（scripts/eval_rag_ragas.py）
+# 需先安装 requirements.txt；本文件仅含评估额外依赖
+-r requirements.txt
+ragas>=0.2.0
+datasets>=2.14.0

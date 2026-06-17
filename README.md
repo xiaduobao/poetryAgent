@@ -9,31 +9,50 @@
 ## 架构一览
 
 ```
-用户提问
+用户（React + JWT）
     ↓
-FastAPI (/api/v1/chat)
+FastAPI (/api/v1/chat/stream)
+    ├─ JWT 认证 + 套餐配额
+    ├─ 会话/消息持久化（PostgreSQL / 本地 SQLite）
+    └─ LangGraph Agent
+        ├─ 意图识别（规则 + LLM）
+        ├─ RAG 分支 → 混合检索(BM25+向量) → BGE-Rerank → LLM 鉴赏
+        ├─ 工具分支 → author / meter / compare 等 → LLM 整理
+        └─ 闲聊分支
     ↓
-LangGraph Agent
-    ├─ 意图识别（规则 + LLM）
-    ├─ RAG 分支 → 混合检索(BM25+向量) → BGE-Rerank → LLM 鉴赏
-    ├─ 工具分支 → author / meter / compare → LLM 整理
-    └─ 闲聊分支
+多轮记忆（thread_id + LangGraph Checkpoint：Postgres → Redis → MemorySaver 降级）
     ↓
-多轮记忆（thread_id + MemorySaver）
+可观测性（LangSmith / Prometheus / Sentry）
 ```
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Python 3.11 + FastAPI |
-| 前端 | React 19 + Vite + shadcn/ui + Tailwind |
-| 会话 | SQLite 持久化 + SSE 流式输出 |
+| 后端 | Python 3.11 + FastAPI + SQLAlchemy 2.0 异步 |
+| 前端 | React 19 + Vite + shadcn/ui + Tailwind + AuthContext |
+| 认证 | JWT（access + refresh）+ 多租户配额 |
+| 数据 | **生产**：PostgreSQL 16 + Alembic 迁移；**本地**：SQLite（`SESSIONS_DB`） |
+| 缓存/Checkpoint | **生产**：Redis 7（Agent 记忆 + 限流计数）；**本地**：可选，未配置时降级 MemorySaver |
+| 会话 | 数据库持久化 + SSE 流式输出 |
 | Agent | LangChain + LangGraph |
 | RAG | BGE-small-zh Embedding + Chroma + BM25 混合检索 + BGE-Rerank |
-| 工具 | 作者生平 JSON / 格律分析 / 风格对比 |
+| 工具 | 作者生平 / 格律分析 / 风格对比 / 主题推荐等 7 个工具 |
 | LLM | 通义千问（DashScope OpenAI 兼容 API，默认 `qwen-plus`） |
-| 部署 | Docker |
+| 可观测 | LangSmith 追踪、Prometheus `/metrics`、Sentry、Token 用量计量 |
+| 部署 | Docker Compose（Postgres + Redis + App） |
+
+### 本地开发 vs Docker 生产
+
+| 配置项 | 本地开发（默认） | Docker Compose / ECS |
+|--------|------------------|----------------------|
+| 数据库 | SQLite（`SESSIONS_DB=./data/sessions.db`） | PostgreSQL（`DATABASE_URL`） |
+| Schema | 启动时 `alembic upgrade head` | 同上（容器 CMD 先执行迁移） |
+| Agent 记忆 | MemorySaver（进程重启后丢失） | Redis 或 Postgres Checkpoint |
+| 限流 | 进程内计数 | Redis 共享计数（`RATE_LIMIT_STORAGE_URI`） |
+| 向量库 | 本地 `data/chroma_db` | 挂载 `./data` 卷 |
+
+> **说明**：本地不配 `DATABASE_URL` / `REDIS_URL` 时仍可完整跑通聊天与 RAG；多轮 Agent 记忆在重启后会重置。生产环境请使用 `docker compose up` 获得完整持久化能力。
 
 ## 快速开始
 
@@ -43,12 +62,34 @@ LangGraph Agent
 
 ```bash
 cd poetryAgent
-python3.11 -m venv .venv   # 或 python3.12
+python3.11 -m venv .venv   # 必须用 3.11/3.12，勿用系统默认 python3（可能是 3.13）
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+python --version            # 应显示 3.11.x 或 3.12.x
+
+# 国内网络建议加镜像与更长超时（torch 包较大）
+pip install -r requirements.txt \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple \
+  --default-timeout=120
+
 cp .env.example .env
 # 编辑 .env，填入 DashScope API Key（OPENAI_API_KEY）
 # 可选模型：qwen-turbo / qwen-plus / qwen-max
+```
+
+#### 依赖安装失败排查
+
+| 报错 | 原因 | 处理 |
+|------|------|------|
+| `No matching distribution found for torch` | 使用了 **Python 3.13** | 删除旧 venv，用 `python3.11 -m venv .venv` 重建 |
+| `Read timed out` / 连接 pypi.org 超时 | 网络慢或需镜像 | 加 `-i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=120` |
+| `Requires-Python <3.13` | 同上，3.13 不兼容 | 切换到 3.11/3.12 |
+
+```bash
+# 一键重建环境（推荐）
+rm -rf .venv
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=120
 ```
 
 ### 2. 构建向量库
@@ -109,11 +150,178 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 构建后访问 http://localhost:8000 即为聊天界面，API 仍在 `/api/v1`。
 
-### 6. Docker 部署
+### 6. Docker 部署（推荐生产）
 
 ```bash
 docker compose up --build
 ```
+
+Compose 栈包含 **PostgreSQL + Redis + App**，启动时自动执行 `alembic upgrade head` 并完成数据库迁移。访问 http://localhost:8000（需先构建前端或挂载 dist）。
+
+### 7. 测试
+
+```bash
+# 需先 pip install -r requirements.txt
+pytest tests/ -v
+pytest tests/ -v --cov=app --cov-fail-under=40   # 与 CI 一致
+```
+
+测试覆盖：JWT 认证、输入安全、意图规则、会话 CRUD、Chat/RAG API（Mock LLM，不消耗 API Key）。
+
+### 8. RAG 检索评估
+
+**简易关键词检查**（无需 LLM API）：
+
+```bash
+python scripts/eval_rag.py
+python scripts/eval_rag.py --golden tests/eval/rag_golden_set.json
+```
+
+**Ragas 全链路评估**（检索 + 生成 + 多维度指标，需 `OPENAI_API_KEY`）：
+
+```bash
+pip install -r requirements-eval.txt \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=120
+python scripts/eval_rag_ragas.py
+python scripts/eval_rag_ragas.py --retrieval-only   # 仅评检索（ContextRecall）
+python scripts/eval_rag_ragas.py --output reports/ragas.json
+```
+
+| 脚本 | 指标 | 说明 |
+|------|------|------|
+| `eval_rag.py` | 召回数、关键词命中 | 离线 smoke test，适合 CI |
+| `eval_rag_ragas.py` | Faithfulness、AnswerRelevancy、ContextRecall、FactualCorrectness | 基于 [Ragas](https://docs.ragas.io/)，用 LLM 评判回答质量 |
+
+Golden set 位于 `tests/eval/rag_golden_set.json`，每条含 `query`、`reference`（参考答案）及可选 `author` 过滤。
+
+### 9. 部署到阿里云 ECS
+
+通过 SSH + rsync 将项目同步到 ECS，在远端 `docker compose build` 启动；Nginx 监听 80 端口反代到容器 `8000`。
+
+**推荐 ECS 规格**：2 vCPU / 4 GiB 内存起，系统盘 ≥ 40 GB（需加载 PyTorch 与 BGE 模型）。安全组入站放行 **22**（SSH）、**80**（HTTP）。
+
+#### 一次性初始化 ECS
+
+```bash
+cp scripts/deploy/deploy.env.example scripts/deploy/deploy.env
+# 编辑 deploy.env：ECS_HOST、SSH_KEY、REMOTE_DIR 等
+./scripts/deploy/setup-ecs.sh
+```
+
+`setup-ecs.sh` 会在 ECS 上安装 Docker、Nginx，并写入反向代理配置（含 SSE 流式支持）。
+
+#### 配置生产环境变量
+
+编辑项目根目录 `.env`（参见 `.env.example`），至少配置 DashScope API Key。生产环境建议：
+
+```env
+EMBEDDING_MODEL=./data/models/BAAI--bge-small-zh-v1.5
+RERANK_MODEL=./data/models/BAAI--bge-reranker-base
+HF_ENDPOINT=https://hf-mirror.com
+LANGSMITH_PROJECT=poetry-agent-prod
+```
+
+#### 首次发布
+
+应用依赖 Embedding/Rerank 模型与向量库，首次部署二选一：
+
+- **推荐（本地已构建好）**：本地执行 `python scripts/download_models.py` 与 `python scripts/build_index.py`，再同步数据发布：
+
+```bash
+./scripts/deploy/deploy.sh --with-data
+```
+
+- **在 ECS 构建**：先 `./scripts/deploy/deploy.sh`，SSH 登录后进入容器下载模型并建索引（耗时较长，需 ECS 内存 ≥ 4GB）。
+
+#### 日常更新
+
+```bash
+./scripts/deploy/deploy.sh              # 同步配置并启动（ACR 模式只 pull，不 build）
+./scripts/deploy/deploy.sh --with-data  # 同步 data/（语料、模型、向量库）
+./scripts/deploy/deploy.sh --env-only   # 仅更新 .env 并重启
+./scripts/deploy/deploy.sh --pull       # 仅拉取最新 ACR 镜像并重启
+```
+
+#### 推荐：阿里云 ACR 部署（避免 ECS 运行时 build）
+
+在 ECS 上构建镜像耗时长（torch 等依赖）。推荐 **云端 build → push ACR → ECS pull 启动**。
+
+> **说明**：ACR **个人版**是镜像仓库，没有「在 ACR 控制台里自动 build Dockerfile」。
+> 常见做法：在 **ECS 上 build**（本脚本）或 **本地 build**（`build-push-acr.sh`），再 push 到 ACR。
+
+**1. 配置 `scripts/deploy/deploy.env`**
+
+```env
+POETRY_AGENT_IMAGE=crpi-xxxxx.ap-southeast-1.personal.cr.aliyuncs.com/bobpoc/poetryagent:latest
+ACR_REGISTRY=crpi-xxxxx.ap-southeast-1.personal.cr.aliyuncs.com
+ACR_USERNAME=你的阿里云账号
+ACR_PASSWORD=ACR控制台-访问凭证-固定密码
+```
+
+**2. 在 ECS 上构建并 push ACR（推荐，不在本地打镜像）**
+
+```bash
+./scripts/deploy/build-on-ecs.sh
+# 强制不用缓存（改了 Dockerfile 后）：
+./scripts/deploy/build-on-ecs.sh --no-cache
+```
+
+**或本地 Mac 构建 push：**
+
+```bash
+./scripts/deploy/build-push-acr.sh --no-cache
+```
+
+**3. ECS 首次登录 ACR（未配置 ACR_USERNAME/PASSWORD 时手动一次）**
+
+```bash
+ssh root@<ECS_IP>
+docker login crpi-xxxxx.ap-southeast-1.personal.cr.aliyuncs.com
+```
+
+**4. 部署到 ECS（只 pull，不 build）**
+
+```bash
+./scripts/deploy/deploy.sh --with-data   # 首次（同步 data/models、chroma_db）
+./scripts/deploy/deploy.sh --pull        # 日常：拉新镜像并重启
+```
+
+ECS 上不再执行 `docker build`，启动约 **1～2 分钟**。
+
+**注意**：模型与向量库仍在 ECS 的 `./data/` 卷中，`.env` 请用容器路径：
+
+```env
+EMBEDDING_MODEL=./data/models/BAAI--bge-small-zh-v1.5
+RERANK_MODEL=./data/models/BAAI--bge-reranker-base
+```
+
+#### 日常更新（ECS 本地 build 方式）
+
+```bash
+./scripts/deploy/deploy.sh              # 同步代码并在 ECS build（较慢）
+./scripts/deploy/deploy.sh --env-only   # 仅更新 .env 并重启
+```
+
+部署成功后访问 `http://<ECS公网IP>/`。
+
+#### 远端运维
+
+SSH 登录 ECS 后，在项目目录执行：
+
+```bash
+cd /opt/poetry-agent   # 或 deploy.env 中的 REMOTE_DIR
+./scripts/deploy/remote-compose.sh logs
+./scripts/deploy/remote-compose.sh health
+./scripts/deploy/remote-compose.sh restart
+```
+
+#### 故障排查
+
+| 现象 | 处理 |
+|------|------|
+| 502 Bad Gateway | 容器未启动 → `remote-compose.sh logs` |
+| RAG 无检索结果 | `data/chroma_db` 未同步或未建索引 → `deploy.sh --with-data` 或容器内执行 `build_index.py` |
+| 模型下载失败 | 确认 `.env` 中 `HF_ENDPOINT=https://hf-mirror.com`；ECS 安全组出站放行 HTTPS |
 
 ## 可观测性（LangSmith）
 
@@ -253,7 +461,8 @@ poetryAgent/
 │   ├── main.py           # FastAPI 入口（含 StaticFiles 挂载）
 │   ├── config.py         # 配置
 │   ├── observability/    # LangSmith 追踪
-│   ├── db/               # SQLite 会话持久化
+│   ├── db/               # SQLAlchemy 模型 + Alembic 迁移
+│   ├── auth/             # JWT 认证、配额
 │   ├── api/              # 路由与 Schema
 │   ├── rag/              # 分块、Embedding、混合检索、Rerank
 │   ├── agent/            # LangGraph 工作流、Prompt、工具绑定
@@ -268,9 +477,18 @@ poetryAgent/
 │   ├── corpus/           # 诗词 Markdown 语料
 │   ├── authors.json      # 作者库
 │   └── chroma_db/        # 向量库（构建后生成）
+├── alembic/              # 数据库迁移（001_initial_schema）
+├── tests/                # pytest（auth / 安全 / 意图 / API 集成）
+│   └── eval/             # RAG golden set
 ├── scripts/
 │   ├── build_index.py       # 构建 / 重建向量索引
-│   └── generate_corpus.py   # LLM 批量生成语料
+│   ├── eval_rag.py          # RAG 检索关键词评估（离线）
+│   ├── eval_rag_ragas.py    # Ragas 全链路 RAG 评估
+│   ├── generate_corpus.py   # LLM 批量生成语料
+│   └── deploy/              # 阿里云 ECS 部署脚本
+│       ├── deploy.sh
+│       ├── setup-ecs.sh
+│       └── remote-compose.sh
 ├── Dockerfile
 └── docker-compose.yml
 ```
@@ -363,9 +581,9 @@ python scripts/generate_corpus.py batch --file data/poems_batch.example.txt --re
 
 1. **分块策略**：按单首诗词+鉴赏为语义块，100 token 重叠防断裂，标题锚定元数据。
 2. **混合检索**：向量语义 + BM25 关键词，合并去重后 BGE-Rerank 精排。
-3. **LangGraph**：意图分支、RAG/工具/闲聊三路、MemorySaver 多轮记忆。
+3. **LangGraph**：意图分支、RAG/工具/闲聊三路、Checkpoint 多轮记忆（Postgres/Redis）。
 4. **幻觉抑制**：系统 Prompt 约束 + 强制引用 [1][2] + 无资料时明确说明。
-5. **工程化**：FastAPI 异步、输入校验、Docker 一键演示。
+5. **工程化**：JWT 多租户、Alembic 迁移、FastAPI 异步、Token 计量、Docker 一键部署、pytest CI。
 
 ## 许可证
 

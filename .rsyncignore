@@ -10,12 +10,12 @@ venv/
 .DS_Store
 .python-version
 
-# 密钥与本地配置
+# 密钥与本地部署配置
 .env
 .env.prod
 scripts/deploy/deploy.env
 
-# 前端（镜像内已含构建产物）
+# 前端构建产物（Docker 内重新构建）
 frontend/node_modules/
 frontend/dist/
 

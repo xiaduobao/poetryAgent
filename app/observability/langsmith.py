@@ -27,6 +27,9 @@ def init_langsmith(settings: Settings) -> None:
 def trace_metadata(
     *,
     session_id: str | None = None,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
+    request_id: str | None = None,
     intent: str | None = None,
     mode: str | None = None,
     filters: dict | None = None,
@@ -38,6 +41,12 @@ def trace_metadata(
     meta: dict[str, Any] = {}
     if session_id:
         meta["session_id"] = session_id
+    if user_id:
+        meta["user_id"] = user_id
+    if tenant_id:
+        meta["tenant_id"] = tenant_id
+    if request_id:
+        meta["request_id"] = request_id
     if intent:
         meta["intent"] = intent
     if mode:

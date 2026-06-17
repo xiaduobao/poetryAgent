@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 ECS 上管理 Docker Compose（仅 ACR 拉取，不 build）
+# 在 ECS 上管理 Docker Compose 服务（由 deploy.sh 调用，也可 SSH 后手动执行）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,6 +7,7 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${PROJECT_DIR}"
 
+# 读取 deploy 写入的镜像地址（ACR 模式）
 if [[ -f "${PROJECT_DIR}/.compose.env" ]]; then
     # shellcheck source=/dev/null
     set -a
@@ -14,9 +15,10 @@ if [[ -f "${PROJECT_DIR}/.compose.env" ]]; then
     set +a
 fi
 
-: "${POETRY_AGENT_IMAGE:?缺少 POETRY_AGENT_IMAGE，请检查 deploy.env 与 .compose.env}"
-
-COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.prod.yml)
+COMPOSE_FILES=(-f docker-compose.yml)
+if [[ -n "${POETRY_AGENT_IMAGE:-}" ]]; then
+    COMPOSE_FILES+=(-f docker-compose.prod.yml)
+fi
 
 compose() {
     docker compose "${COMPOSE_FILES[@]}" "$@"
@@ -27,8 +29,8 @@ usage() {
 用法: ./scripts/deploy/remote-compose.sh <command>
 
 命令:
-  up          从 ACR 拉取镜像并启动
-  pull-up     同 up（拉取最新镜像后启动）
+  up          启动（有 POETRY_AGENT_IMAGE 则 pull，否则 build）
+  pull-up     从 ACR 拉取镜像并启动（需 .compose.env）
   down        停止并移除容器
   restart     重启服务
   logs        查看日志（follow）
@@ -37,13 +39,26 @@ usage() {
 EOF
 }
 
+cmd_up() {
+    if [[ -n "${POETRY_AGENT_IMAGE:-}" ]]; then
+        echo "==> ACR 模式: ${POETRY_AGENT_IMAGE}"
+        compose pull poetry-agent
+        compose up -d --no-build
+    else
+        echo "==> 本地 build 模式"
+        compose up -d --build
+    fi
+}
+
 cmd_pull_up() {
+    : "${POETRY_AGENT_IMAGE:?缺少 POETRY_AGENT_IMAGE，请检查 deploy.env 与 .compose.env}"
     echo "==> 拉取镜像: ${POETRY_AGENT_IMAGE}"
     compose pull poetry-agent
     compose up -d --no-build
 }
 
 cmd_down() {
+    echo "提示: 仅停止容器，./data/postgres 与 ./data/redis 数据会保留。"
     compose down
 }
 
@@ -88,7 +103,8 @@ cmd_health() {
 
 COMMAND="${1:-}"
 case "${COMMAND}" in
-    up|pull-up) cmd_pull_up ;;
+    up) cmd_up ;;
+    pull-up) cmd_pull_up ;;
     down) cmd_down ;;
     restart) cmd_restart ;;
     logs) cmd_logs ;;

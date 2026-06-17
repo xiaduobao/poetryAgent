@@ -2,9 +2,15 @@
 # Core
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
-pydantic>=2.5.0
+pydantic[email]>=2.5.0
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
+python-multipart>=0.0.9
+
+# Auth
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0,<5.0.0
 
 # LangChain / LangGraph
 langchain>=0.3.0
@@ -14,9 +20,10 @@ langchain-community>=0.3.0
 langchain-chroma>=0.1.4
 langchain-huggingface>=0.1.0
 langgraph>=0.2.0
+langgraph-checkpoint-postgres>=2.0.0
+langgraph-checkpoint-redis>=0.0.5
 
 # RAG（Embedding / Rerank 依赖 PyTorch）
-# PyTorch 2.2.x 预编译包基于 NumPy 1.x，勿升级到 NumPy 2
 numpy>=1.26.0,<2
 torch>=2.0.0,<3.0.0
 chromadb>=0.5.0
@@ -29,11 +36,24 @@ langchain-openai>=0.2.0
 
 # Observability
 langsmith>=0.1.0
+prometheus-client>=0.20.0
+python-json-logger>=2.0.7
+sentry-sdk[fastapi]>=2.0.0
 
 # Utils
 httpx>=0.26.0
 tiktoken>=0.5.0
+slowapi>=0.1.9
 
 # Database
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.19.0
+asyncpg>=0.29.0
+alembic>=1.13.0
+redis>=5.0.0
+
+# Dev / Test
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+ruff>=0.4.0

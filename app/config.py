@@ -15,23 +15,28 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # 环境
+    app_env: str = "development"
+    debug: bool = False
+
     openai_api_key: str = ""
     openai_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_model: str = "qwen-plus"
 
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     rerank_model: str = "BAAI/bge-reranker-base"
-    # 无法直连 huggingface.co 时设为镜像，如 https://hf-mirror.com
     hf_endpoint: str = ""
 
     chroma_persist_dir: str = str(ROOT_DIR / "data" / "chroma_db")
     corpus_dir: str = str(ROOT_DIR / "data" / "corpus")
     authors_db: str = str(ROOT_DIR / "data" / "authors.json")
     sessions_db: str = str(ROOT_DIR / "data" / "sessions.db")
+    database_url: str = ""
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     log_level: str = "INFO"
+    log_json: bool = False
 
     chunk_overlap_tokens: int = 100
     retrieval_top_k: int = 8
@@ -40,6 +45,58 @@ class Settings(BaseSettings):
     langsmith_api_key: str = ""
     langsmith_tracing: bool = False
     langsmith_project: str = "poetry-agent"
+
+    # JWT 认证
+    jwt_secret_key: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_access_expire_minutes: int = 15
+    jwt_refresh_expire_days: int = 7
+
+    # 游客访问
+    guest_enabled: bool = True
+    guest_daily_chat_limit: int = 20
+    guest_daily_rag_limit: int = 20
+    guest_access_expire_hours: int = 24
+
+    # CORS（逗号分隔）
+    cors_origins: str = "http://localhost:5173,http://localhost:8000"
+
+    # 限流
+    rate_limit_enabled: bool = True
+    rate_limit_default: str = "120/hour"
+    rate_limit_chat: str = "15/minute"
+    rate_limit_rag: str = "30/minute"
+    rate_limit_storage_uri: str = ""
+
+    # 内容安全（阿里云，可选）
+    content_moderation_enabled: bool = False
+    aliyun_access_key_id: str = ""
+    aliyun_access_key_secret: str = ""
+    aliyun_region: str = "cn-shanghai"
+
+    # Redis（Checkpoint / 限流）
+    redis_url: str = ""
+
+    # Sentry
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.1
+
+    # Prometheus metrics 保护
+    metrics_basic_auth_user: str = ""
+    metrics_basic_auth_password: str = ""
+
+    # 告警 Webhook（钉钉/飞书）
+    alert_webhook_url: str = ""
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("production", "prod")
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        if not self.cors_origins.strip():
+            return []
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 def apply_hf_hub_env(settings: Settings | None = None) -> None:

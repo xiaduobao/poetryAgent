@@ -3,6 +3,7 @@ import { Loader2, Send, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { PromptChips } from "./PromptChips"
 
 interface ChatInputProps {
   onSend: (text: string) => void
@@ -11,6 +12,7 @@ interface ChatInputProps {
   maxLength: number
   draft: string
   onDraftChange: (text: string) => void
+  suggestions?: string[]
 }
 
 export function ChatInput({
@@ -20,6 +22,7 @@ export function ChatInput({
   maxLength,
   draft,
   onDraftChange,
+  suggestions = [],
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [focused, setFocused] = useState(false)
@@ -52,8 +55,23 @@ export function ChatInput({
     onDraftChange("")
   }
 
+  const handleSuggestionSelect = (text: string) => {
+    onDraftChange(text)
+    textareaRef.current?.focus()
+  }
+
+  const showSuggestions =
+    suggestions.length > 0 && !draft.trim() && !streaming
+
   return (
     <div className="border-t bg-background p-4">
+      {showSuggestions && (
+        <PromptChips
+          suggestions={suggestions}
+          onSelect={handleSuggestionSelect}
+          className="mx-auto mb-3 max-w-3xl"
+        />
+      )}
       <div
         className={cn(
           "mx-auto max-w-3xl rounded-2xl border bg-card p-3 shadow-sm transition-shadow",

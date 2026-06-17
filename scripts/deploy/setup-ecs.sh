@@ -147,7 +147,7 @@ REMOTE_SETUP
 echo ""
 echo "==> setup-ecs 完成"
 echo "下一步:"
-echo "  1. 在 ACR 控制台构建镜像并 push 到 bobpoc/poetryagent:latest"
+echo "  1. 构建并 push 镜像: ./scripts/deploy/build-on-ecs.sh（或 build-push-acr.sh）"
 echo "  2. ECS 登录 ACR: docker login ${ACR_REGISTRY:-crpi-60eut63p9vp6h7li.ap-southeast-1.personal.cr.aliyuncs.com}"
 echo "  3. 配置本地 .env.prod，首次发布: ./scripts/deploy/deploy.sh --with-data"
 echo "  4. 访问: http://${ECS_HOST}/"

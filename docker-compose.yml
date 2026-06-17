@@ -1,13 +1,64 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: poetry
+      POSTGRES_PASSWORD: poetry
+      POSTGRES_DB: poetry_agent
+    volumes:
+      # 绑定到宿主机 ./data/postgres，ECS 重启 / docker compose restart 均保留数据
+      # 注意：docker compose down -v 会删除命名卷；绑定目录请勿手动 rm -rf
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poetry -d poetry_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      # Checkpoint / 限流计数持久化（AOF）
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   poetry-agent:
+    image: ${POETRY_AGENT_IMAGE:-poetry-agent-poetry-agent:latest}
     build: .
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
-    volumes:
-      - ./data:/app/data
     environment:
+      - DATABASE_URL=postgresql://poetry:poetry@postgres:5432/poetry_agent
+      - REDIS_URL=redis://redis:6379/0
+      - RATE_LIMIT_STORAGE_URI=redis://redis:6379/1
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - CORPUS_DIR=/app/data/corpus
+      - APP_ENV=production
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
     restart: unless-stopped
