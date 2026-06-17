@@ -27,6 +27,7 @@ export interface SessionDetail extends Session {
 
 export type StreamPhase =
   | "classifying"
+  | "describing"
   | "retrieving"
   | "tooling"
   | "generating"
@@ -35,6 +36,7 @@ export type StreamPhase =
 
 export const PHASE_LABELS: Record<StreamPhase, string> = {
   classifying: "正在理解问题…",
+  describing: "正在理解画面…",
   retrieving: "正在检索知识库…",
   tooling: "正在调用工具…",
   generating: "正在生成回答…",

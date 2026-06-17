@@ -139,7 +139,22 @@ npm run dev
 
 浏览器打开 http://localhost:5173 。Vite 会将 `/api` 代理到后端 `8000` 端口。
 
-**前端功能**：会话侧边栏（新建 / 列表 / 搜索 / 重命名 / 删除）、SSE 流式输出、Markdown 渲染、多行输入（Shift+Enter 换行）、字数限制、停止生成、深色模式。
+**前端功能**：会话侧边栏（新建 / 列表 / 搜索 / 重命名 / 删除）、SSE 流式输出、Markdown 渲染、多行输入（Shift+Enter 换行）、字数限制、停止生成、深色模式、**看图作诗**（上传图片触发创作）。
+
+### 看图作诗
+
+在聊天输入框点击「图片」上传 JPEG / PNG / WebP（最大 4MB），可仅传图或附加文字说明体裁与主题。
+
+**流程**：视觉模型（默认 `qwen-vl-max`）理解画面意境 → 合成描述后走现有创作 Agent（`qwen-plus` + `writing_assistant`）→ 流式输出诗作。
+
+| 配置项 | 说明 |
+|--------|------|
+| `VISION_MODEL` | 视觉模型，默认 `qwen-vl-max` |
+| `OPENAI_API_KEY` | 与文本 LLM 共用 DashScope API Key |
+
+- 仅上传图片、无文字时，默认创作 **五言绝句**
+- 图片**不持久化**；会话历史中保存的是画面描述文字，刷新后不可回看原图
+- 每次看图作诗会调用两次 LLM（视觉描述 + 诗词创作），请注意 API 用量
 
 ### 5. 生产构建（前后端一体）
 
@@ -210,15 +225,39 @@ cp scripts/deploy/deploy.env.example scripts/deploy/deploy.env
 
 `setup-ecs.sh` 会在 ECS 上安装 Docker、Nginx，并写入反向代理配置（含 SSE 流式支持）。
 
-#### 配置生产环境变量
+#### 配置环境变量（dev / prod 隔离）
 
-编辑项目根目录 `.env`（参见 `.env.example`），至少配置 DashScope API Key。生产环境建议：
+| 环境 | 配置文件 | 用途 |
+|------|----------|------|
+| 本地开发 | `.env` | `cp .env.example .env`，本地跑 uvicorn / docker compose |
+| ECS 生产 | `.env.prod` | `cp .env.prod.example .env.prod`，仅由 `deploy.sh` 上传 |
+
+两套配置互不影响：发布脚本**只上传 `.env.prod`**，不会覆盖本地 `.env`。
+
+**本地 dev**（`.env.example` → `.env`）：
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入 DashScope API Key 等
+```
+
+**ECS prod**（`.env.prod.example` → `.env.prod`）：
+
+```bash
+cp .env.prod.example .env.prod
+# 编辑 .env.prod：生产 API Key、独立 JWT_SECRET_KEY、CORS 域名等
+```
+
+生产环境建议：
 
 ```env
+APP_ENV=production
 EMBEDDING_MODEL=./data/models/BAAI--bge-small-zh-v1.5
 RERANK_MODEL=./data/models/BAAI--bge-reranker-base
 HF_ENDPOINT=https://hf-mirror.com
 LANGSMITH_PROJECT=poetry-agent-prod
+JWT_SECRET_KEY=<与 dev 不同的随机长字符串>
+CORS_ORIGINS=http://<ECS公网IP>,https://<你的域名>
 ```
 
 #### 首次发布
@@ -238,7 +277,7 @@ LANGSMITH_PROJECT=poetry-agent-prod
 ```bash
 ./scripts/deploy/deploy.sh              # 同步配置并启动（ACR 模式只 pull，不 build）
 ./scripts/deploy/deploy.sh --with-data  # 同步 data/（语料、模型、向量库）
-./scripts/deploy/deploy.sh --env-only   # 仅更新 .env 并重启
+./scripts/deploy/deploy.sh --env-only   # 仅更新 .env.prod 并重启
 ./scripts/deploy/deploy.sh --pull       # 仅拉取最新 ACR 镜像并重启
 ```
 
@@ -288,7 +327,7 @@ docker login crpi-xxxxx.ap-southeast-1.personal.cr.aliyuncs.com
 
 ECS 上不再执行 `docker build`，启动约 **1～2 分钟**。
 
-**注意**：模型与向量库仍在 ECS 的 `./data/` 卷中，`.env` 请用容器路径：
+**注意**：模型与向量库仍在 ECS 的 `./data/` 卷中，`.env.prod` 请用容器路径：
 
 ```env
 EMBEDDING_MODEL=./data/models/BAAI--bge-small-zh-v1.5
@@ -299,7 +338,7 @@ RERANK_MODEL=./data/models/BAAI--bge-reranker-base
 
 ```bash
 ./scripts/deploy/deploy.sh              # 同步代码并在 ECS build（较慢）
-./scripts/deploy/deploy.sh --env-only   # 仅更新 .env 并重启
+./scripts/deploy/deploy.sh --env-only   # 仅更新 .env.prod 并重启
 ```
 
 部署成功后访问 `http://<ECS公网IP>/`。
@@ -321,7 +360,7 @@ cd /opt/poetry-agent   # 或 deploy.env 中的 REMOTE_DIR
 |------|------|
 | 502 Bad Gateway | 容器未启动 → `remote-compose.sh logs` |
 | RAG 无检索结果 | `data/chroma_db` 未同步或未建索引 → `deploy.sh --with-data` 或容器内执行 `build_index.py` |
-| 模型下载失败 | 确认 `.env` 中 `HF_ENDPOINT=https://hf-mirror.com`；ECS 安全组出站放行 HTTPS |
+| 模型下载失败 | 确认 `.env.prod` 中 `HF_ENDPOINT=https://hf-mirror.com`；ECS 安全组出站放行 HTTPS |
 
 ## 可观测性（LangSmith）
 

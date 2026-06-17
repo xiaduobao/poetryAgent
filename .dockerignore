@@ -1,0 +1,26 @@
+.git/
+.idea/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+.python-version
+
+.env
+scripts/deploy/deploy.env
+
+# 运行时挂载，不打进镜像
+data/
+models/
+
+frontend/node_modules/
+
+# 测试/文档
+tests/
+docs/
+*.md
+!README.md

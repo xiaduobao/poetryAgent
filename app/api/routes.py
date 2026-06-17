@@ -54,6 +54,11 @@ from app.tools.meter import analyze_meter
 from app.tools.poem_lookup import lookup_poem
 from app.tools.theme import recommend_by_theme
 from app.tools.writing import writing_guide
+from app.vision.describe import (
+    build_image_writing_message,
+    describe_image_for_poetry,
+    validate_image_base64,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -97,6 +102,40 @@ def _status_phase(prepared_mode: str, intent: str) -> str:
     return "generating"
 
 
+def _has_image(req: ChatRequest) -> bool:
+    return bool(req.image_base64 and req.image_base64.strip())
+
+
+async def _sanitize_user_text(message: str) -> str:
+    text = (message or "").strip()
+    if not text:
+        return ""
+    cleaned, err = await sanitize_input_async(text)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return cleaned
+
+
+async def _resolve_agent_message(req: ChatRequest) -> tuple[str, bool]:
+    """解析聊天输入：有图时先做视觉描述并合成增强消息。返回 (agent_message, has_image)。"""
+    has_image = _has_image(req)
+    user_text = await _sanitize_user_text(req.message)
+
+    if not has_image:
+        return user_text, False
+
+    try:
+        image_bytes, mime = validate_image_base64(req.image_base64 or "")
+        vision_output = describe_image_for_poetry(image_bytes, mime)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("vision describe error")
+        raise HTTPException(status_code=500, detail=f"画面理解失败: {e}") from e
+
+    return build_image_writing_message(vision_output, user_text), True
+
+
 @traceable(run_type="chain", name="chat_request")
 def _traced_run_agent(
     message: str,
@@ -104,7 +143,14 @@ def _traced_run_agent(
     filters: dict,
     meta: dict,
 ) -> dict:
-    update_run_metadata(**meta, session_id=thread_id, stream=False, endpoint="/api/v1/chat", filters=filters or None, message_preview=truncate_input(message))
+    update_run_metadata(
+        **meta,
+        session_id=thread_id,
+        stream=False,
+        endpoint="/api/v1/chat",
+        filters=filters or None,
+        message_preview=truncate_input(message),
+    )
     with trace_session(thread_id):
         return run_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
 
@@ -116,7 +162,14 @@ async def _traced_stream_chat(
     filters: dict,
     meta: dict,
 ) -> AsyncIterator[tuple[str, object]]:
-    update_run_metadata(**meta, session_id=thread_id, stream=True, endpoint="/api/v1/chat/stream", filters=filters or None, message_preview=truncate_input(message))
+    update_run_metadata(
+        **meta,
+        session_id=thread_id,
+        stream=True,
+        endpoint="/api/v1/chat/stream",
+        filters=filters or None,
+        message_preview=truncate_input(message),
+    )
     with trace_session(thread_id):
         prepared = prepare_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
         yield ("prepared", prepared)
@@ -132,13 +185,11 @@ async def chat(
     user: User = Depends(require_chat_quota),
     db: AsyncSession = Depends(get_db),
 ) -> ChatResponse:
-    text, err = await sanitize_input_async(req.message)
-    if err:
-        raise HTTPException(status_code=400, detail=err)
+    text, has_image = await _resolve_agent_message(req)
 
     thread_id = _resolve_thread_id(req)
     filters = _build_filters(req)
-    meta = _trace_ctx(request, user)
+    meta = {**_trace_ctx(request, user), "has_image": has_image}
 
     session = await crud.get_session(db, thread_id, user_id=user.id)
     if not session:
@@ -193,13 +244,18 @@ async def chat_stream(
     user: User = Depends(require_chat_quota),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    text, err = await sanitize_input_async(req.message)
-    if err:
-        raise HTTPException(status_code=400, detail=err)
+    has_image = _has_image(req)
+    user_text = await _sanitize_user_text(req.message)
+
+    if has_image:
+        try:
+            validate_image_base64(req.image_base64 or "")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     thread_id = _resolve_thread_id(req)
     filters = _build_filters(req)
-    meta = _trace_ctx(request, user)
+    meta = {**_trace_ctx(request, user), "has_image": has_image}
 
     session = await crud.get_session(db, thread_id, user_id=user.id)
     if not session:
@@ -208,18 +264,28 @@ async def chat_stream(
         session = await crud.create_session(db, user.id, title="新对话")
         thread_id = session.id
 
-    user_msg = await crud.add_message(db, thread_id, user.id, "user", text)
-    await crud.auto_title_from_message(db, thread_id, user.id, text)
-    await db.commit()
-    user_msg_id = user_msg.id if user_msg else ""
-
     async def event_generator() -> AsyncIterator[str]:
         full_answer = ""
         intent = ""
         sources: list = []
         assistant_msg_id = ""
+        user_msg_id = ""
         prepared = None
+        text = user_text
         try:
+            if has_image:
+                yield _sse("status", {"phase": "describing"})
+                image_bytes, mime = validate_image_base64(req.image_base64 or "")
+                vision_output = describe_image_for_poetry(image_bytes, mime)
+                text = build_image_writing_message(vision_output, user_text)
+
+            factory = get_session_factory()
+            async with factory() as db_user:
+                user_msg = await crud.add_message(db_user, thread_id, user.id, "user", text)
+                await crud.auto_title_from_message(db_user, thread_id, user.id, text)
+                await db_user.commit()
+                user_msg_id = user_msg.id if user_msg else ""
+
             yield _sse("status", {"phase": "classifying"})
             async for kind, value in _traced_stream_chat(text, thread_id, filters, meta):
                 if kind == "prepared":

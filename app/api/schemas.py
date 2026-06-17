@@ -2,16 +2,25 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=2000)
+    message: str = Field(default="", max_length=2000)
+    image_base64: str | None = Field(default=None, description="图片 base64（不含 data: 前缀）")
     thread_id: str = Field(default="default", description="会话 ID，用于多轮记忆")
     session_id: str | None = Field(default=None, description="会话 ID（与 thread_id 一致）")
     author: str | None = Field(default=None, description="检索过滤：作者")
     dynasty: str | None = Field(default=None, description="检索过滤：朝代")
     genre: str | None = Field(default=None, description="检索过滤：体裁")
+
+    @model_validator(mode="after")
+    def check_message_or_image(self) -> "ChatRequest":
+        has_text = bool(self.message and self.message.strip())
+        has_image = bool(self.image_base64 and self.image_base64.strip())
+        if not has_text and not has_image:
+            raise ValueError("须提供文字或图片")
+        return self
 
 
 class ChatResponse(BaseModel):

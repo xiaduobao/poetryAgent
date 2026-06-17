@@ -86,6 +86,8 @@ def classify_intent(state: AgentState) -> AgentState:
 
 
 def _rule_based_intent(text: str) -> str:
+    if text.startswith("【看图创作】"):
+        return "tool_writing"
     if any(k in text for k in ("写一首", "创作", "对联", "藏头", "填词", "仿写", "帮我写")):
         return "tool_writing"
     if any(k in text for k in ("什么意思", "指什么", "典故", "含义", "是指")) and any(
@@ -186,7 +188,7 @@ def prepare_tool_call(state: AgentState) -> AgentState:
         "tool_lookup": "请使用 poem_lookup 工具查找诗词原文、注释或译文。",
         "tool_theme": "请使用 theme_recommend 工具按主题推荐诗词。",
         "tool_allusion": "请使用 allusion_explain 工具解释典故或字词含义。",
-        "tool_writing": "请使用 writing_assistant 工具获取创作指南，再据此为用户创作示例。",
+        "tool_writing": "请使用 writing_assistant 工具获取创作指南，再据此为用户创作示例。若用户提供了画面描述，请以画面意象为主题创作。",
     }.get(intent, "请根据问题选择合适的工具。")
 
     resp = llm.invoke(

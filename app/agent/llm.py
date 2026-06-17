@@ -15,3 +15,14 @@ def get_llm() -> ChatOpenAI:
         base_url=settings.openai_api_base,
         temperature=0.3,
     )
+
+
+@lru_cache
+def get_vision_llm() -> ChatOpenAI:
+    settings = get_settings()
+    return ChatOpenAI(
+        model=settings.vision_model,
+        api_key=settings.openai_api_key or "sk-placeholder",
+        base_url=settings.openai_api_base,
+        temperature=0.2,
+    )

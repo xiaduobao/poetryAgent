@@ -69,7 +69,7 @@ RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 _upload_prod_env() {
     if [[ ! -f "${PROD_ENV}" ]]; then
         echo "本地 .env.prod 不存在: ${PROD_ENV}" >&2
-        echo "请先配置生产环境变量（可参考 .env.example，APP_ENV=production）" >&2
+        echo "请先执行: cp .env.prod.example .env.prod 并填写生产配置" >&2
         exit 1
     fi
     echo "==> 上传 .env.prod..."
