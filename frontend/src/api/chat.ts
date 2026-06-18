@@ -1,16 +1,23 @@
 import { clearTokens, getValidToken, refreshAccessToken } from "./client"
 import { isGuestSession } from "./auth-storage"
-import type { SourceRef, StreamPhase } from "../types"
+import type { SourceRef, StreamPhase, SubIntent } from "../types"
 
 export interface StreamCallbacks {
   onStatus?: (phase: StreamPhase) => void
   onToken?: (content: string) => void
   onSources?: (sources: SourceRef[]) => void
+  onSubtasks?: (data: {
+    sub_total: number
+    sub_intents: SubIntent[]
+    is_compound?: boolean
+  }) => void
   onDone?: (data: {
     session_id: string
     intent: string
     message_id: string
     sources?: SourceRef[]
+    sub_intents?: SubIntent[]
+    is_compound?: boolean
   }) => void
   onError?: (detail: string) => void
 }
@@ -155,6 +162,9 @@ function parseSSE(raw: string, callbacks: StreamCallbacks) {
         break
       case "sources":
         callbacks.onSources?.(parsed.sources || [])
+        break
+      case "subtasks":
+        callbacks.onSubtasks?.(parsed)
         break
       case "token":
         callbacks.onToken?.(parsed.content)

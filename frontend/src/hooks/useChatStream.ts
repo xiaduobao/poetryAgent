@@ -88,6 +88,19 @@ export function useChatStream() {
               ),
             )
           },
+          onSubtasks: ({ sub_intents, is_compound }) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      sub_intents,
+                      is_compound: is_compound ?? sub_intents.length > 1,
+                    }
+                  : m,
+              ),
+            )
+          },
           onToken: (content) => {
             setMessages((prev) =>
               prev.map((m) =>
@@ -105,6 +118,8 @@ export function useChatStream() {
                     ...m,
                     id: data.message_id || m.id,
                     intent: data.intent,
+                    sub_intents: data.sub_intents,
+                    is_compound: data.is_compound,
                     sources: data.sources ?? m.sources,
                   }
                 }

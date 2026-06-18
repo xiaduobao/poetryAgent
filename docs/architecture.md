@@ -120,13 +120,15 @@ sequenceDiagram
     API-->>FE: SSE done
 ```
 
-**SSE 事件类型**：`status` → `sources`（RAG 时）→ `token` → `done`
+**SSE 事件类型**：`status` → `subtasks`（复合问题时）→ `sources`（RAG 时）→ `token` → `done`
+
+**复合意图**（`COMPOUND_INTENT_ENABLED=true`）：`decomposing` → 并行子任务 `executing` → `generating` 合成回答。单条消息如「介绍杜甫并赏析《登高》」会拆解为多子任务分别走 RAG/工具，再合成。
 
 ---
 
 ## 3. LangGraph Agent 工作流
 
-Agent 定义在 `app/agent/graph.py`，核心是 **意图识别 → 三路分支 → LLM 生成**。
+Agent 定义在 `app/agent/graph.py`，核心是 **意图识别 → 三路分支 → LLM 生成**。启用 `COMPOUND_INTENT_ENABLED` 时入口为 `decompose_node`，复合问题经 LangGraph `Send` 并行 `execute_subtask` 后 `merge_subtasks` 合成。
 
 ```mermaid
 flowchart TD

@@ -140,6 +140,52 @@ body {
   word-break: break-word;
 }
 
+.prose h3 {
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.prose h3:first-child {
+  margin-top: 0;
+}
+
+.prose ul {
+  margin-top: 0.5em;
+  margin-bottom: 0.75em;
+  padding-left: 1.25em;
+}
+
+.prose li {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.prose blockquote {
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+  border-left: 3px solid oklch(0.45 0.15 280 / 0.35);
+  padding-left: 0.875em;
+  font-style: italic;
+  color: var(--foreground);
+  opacity: 0.9;
+}
+
+.prose blockquote p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.prose > :first-child {
+  margin-top: 0;
+}
+
+.prose > :last-child {
+  margin-bottom: 0;
+}
+
 .prose table {
   display: block;
   overflow-x: auto;
@@ -149,4 +195,72 @@ body {
 .prose img {
   max-width: 100%;
   height: auto;
+}
+
+/* Poem structured output — inline section, blends with message bubble */
+.poem-card {
+  margin-top: 0.875rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--border);
+}
+
+.poem-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-bottom: 0.625rem;
+}
+
+.poem-card-title {
+  margin: 0;
+  font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+
+.poem-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.poem-card-body {
+  padding: 0.25rem 0 0.375rem;
+  font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
+  font-size: 1rem;
+  line-height: 2;
+  letter-spacing: 0.14em;
+  text-align: center;
+  color: var(--foreground);
+}
+
+.poem-card-body p {
+  margin: 0;
+}
+
+.poem-card-footer {
+  margin-top: 0.625rem;
+  padding-top: 0.625rem;
+  border-top: 1px dashed var(--border);
+}
+
+.poem-card-quote {
+  margin: 0;
+  font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+.poem-card-note {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--muted-foreground);
 }

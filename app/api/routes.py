@@ -92,7 +92,11 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _status_phase(prepared_mode: str, intent: str) -> str:
+def _status_phase(prepared_mode: str, intent: str, is_compound: bool = False) -> str:
+    if is_compound and prepared_mode == "compound_synthesis":
+        return "executing"
+    if prepared_mode == "compound_synthesis":
+        return "generating"
     if prepared_mode == "rag":
         return "retrieving"
     if prepared_mode == "tool_summary":
@@ -170,9 +174,24 @@ async def _traced_stream_chat(
         filters=filters or None,
         message_preview=truncate_input(message),
     )
+    settings = get_settings()
     with trace_session(thread_id):
+        if settings.compound_intent_enabled:
+            yield ("status", {"phase": "decomposing"})
+        else:
+            yield ("status", {"phase": "classifying"})
         prepared = prepare_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
         yield ("prepared", prepared)
+        sub_intents = prepared.get("sub_intents") or []
+        if len(sub_intents) > 1 and prepared.get("is_compound"):
+            yield (
+                "subtasks",
+                {
+                    "sub_total": len(sub_intents),
+                    "sub_intents": sub_intents,
+                    "is_compound": True,
+                },
+            )
         async for token in stream_final_answer(prepared):
             yield ("token", token)
 
@@ -288,13 +307,25 @@ async def chat_stream(
                 await db_user.commit()
                 user_msg_id = user_msg.id if user_msg else ""
 
-            yield _sse("status", {"phase": "classifying"})
             async for kind, value in _traced_stream_chat(text, thread_id, filters, meta):
-                if kind == "prepared":
+                if kind == "status":
+                    yield _sse("status", value)
+                elif kind == "subtasks":
+                    yield _sse("subtasks", value)
+                elif kind == "prepared":
                     prepared = value
                     intent = prepared["intent"]
                     sources = build_sources_from_prepared(prepared)
-                    yield _sse("status", {"phase": _status_phase(prepared["mode"], intent)})
+                    yield _sse(
+                        "status",
+                        {
+                            "phase": _status_phase(
+                                prepared["mode"],
+                                intent,
+                                is_compound=bool(prepared.get("is_compound")),
+                            )
+                        },
+                    )
                     if sources:
                         yield _sse("sources", {"sources": sources})
                     yield _sse("status", {"phase": "generating"})
@@ -332,6 +363,8 @@ async def chat_stream(
                 "message_id": assistant_msg_id,
                 "user_message_id": user_msg_id,
                 "sources": sources,
+                "sub_intents": (prepared or {}).get("sub_intents"),
+                "is_compound": bool((prepared or {}).get("is_compound")),
             })
         except Exception as e:
             logger.exception("stream agent error")

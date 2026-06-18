@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.security.filter import MAX_INPUT_LENGTH, sanitize_input, wrap_user_input
+from app.security.filter import MAX_INPUT_LENGTH, sanitize_input, strip_user_input, wrap_user_input
 
 
 def test_sanitize_rejects_empty():
@@ -36,3 +36,8 @@ def test_wrap_user_input_adds_delimiters():
     assert wrapped.startswith("<user_input>")
     assert wrapped.endswith("</user_input>")
     assert "你好" in wrapped
+
+
+def test_strip_user_input_roundtrip():
+    inner = "请赏析《春晓》"
+    assert strip_user_input(wrap_user_input(inner)) == inner

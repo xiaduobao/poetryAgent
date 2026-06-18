@@ -3,6 +3,7 @@ import { ImagePlus, Loader2, Send, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { GithubRepoLink } from "@/components/GithubRepoLink"
 import { PromptChips } from "./PromptChips"
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -313,6 +314,9 @@ export function ChatInput({
             )}
           </div>
         </div>
+      </div>
+      <div className="mx-auto mt-2 flex max-w-3xl justify-center">
+        <GithubRepoLink className="text-[11px] sm:text-xs" />
       </div>
     </div>
   )

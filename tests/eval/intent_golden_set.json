@@ -1,0 +1,117 @@
+[
+  {
+    "input": "请赏析《登高》",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "rag"}]
+  },
+  {
+    "input": "分析静夜思的格律",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_meter"}]
+  },
+  {
+    "input": "介绍杜甫的生平",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_author"}]
+  },
+  {
+    "input": "李白和杜甫的诗歌风格有什么区别？",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_compare"}]
+  },
+  {
+    "input": "推荐几首关于思乡的诗",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_theme"}]
+  },
+  {
+    "input": "【看图创作】\n画面描述：远山含黛\n用户要求：写五言绝句",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_writing"}]
+  },
+  {
+    "input": "查找《春晓》的原文和注释",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_lookup"}]
+  },
+  {
+    "input": "「东风不与周郎便」中的周郎是指谁？",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_allusion"}]
+  },
+  {
+    "input": "你好，今天天气怎么样",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "chat"}]
+  },
+  {
+    "input": "介绍杜甫并赏析《登高》",
+    "is_compound": true,
+    "expected_sub_queries": [
+      {"intent": "tool_author"},
+      {"intent": "rag"}
+    ]
+  },
+  {
+    "input": "分析《静夜思》的格律并查找原文",
+    "is_compound": true,
+    "expected_sub_queries": [
+      {"intent": "tool_meter"},
+      {"intent": "tool_lookup"}
+    ]
+  },
+  {
+    "input": "推荐送别诗，并解释「劝君更尽一杯酒」的典故",
+    "is_compound": true,
+    "expected_sub_queries": [
+      {"intent": "tool_theme"},
+      {"intent": "tool_allusion"}
+    ]
+  },
+  {
+    "input": "帮我写一首五言绝句，主题是秋夜",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_writing"}]
+  },
+  {
+    "input": "《念奴娇·赤壁怀古》的主旨是什么",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "rag"}]
+  },
+  {
+    "input": "苏轼的代表作有哪些",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_author"}]
+  },
+  {
+    "input": "李白杜甫谁的诗更好",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_compare"}]
+  },
+  {
+    "input": "介绍李白，并推荐几首他的名篇",
+    "is_compound": true,
+    "expected_sub_queries": [
+      {"intent": "tool_author"},
+      {"intent": "tool_theme"}
+    ]
+  },
+  {
+    "input": "赏析《春晓》，另外分析它的格律",
+    "is_compound": true,
+    "expected_sub_queries": [
+      {"intent": "rag"},
+      {"intent": "tool_meter"}
+    ]
+  },
+  {
+    "input": "<user_input>\n请赏析《登高》\n</user_input>",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "rag"}]
+  },
+  {
+    "input": "<user_input>\n【看图创作】\n用户要求：写一首七言绝句\n</user_input>",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_writing"}]
+  }
+]

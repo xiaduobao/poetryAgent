@@ -70,6 +70,22 @@ def wrap_user_input(text: str) -> str:
     return f"<user_input>\n{text}\n</user_input>"
 
 
+_USER_INPUT_RE = re.compile(
+    r"^\s*<user_input>\s*\n?(.*?)\n?\s*</user_input>\s*$",
+    re.DOTALL,
+)
+
+
+def strip_user_input(text: str) -> str:
+    """去除 <user_input> 包裹，供意图识别与规则匹配使用。"""
+    if not text:
+        return ""
+    m = _USER_INPUT_RE.match(text.strip())
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
 def sanitize_input(text: str) -> Tuple[str, str | None]:
     """
     校验并清洗用户输入。

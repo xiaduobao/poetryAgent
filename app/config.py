@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     # 告警 Webhook（钉钉/飞书）
     alert_webhook_url: str = ""
 
+    # 复合意图：单条消息多问题拆解与并行执行
+    compound_intent_enabled: bool = False
+
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in ("production", "prod")

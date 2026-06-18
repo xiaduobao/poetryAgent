@@ -5,6 +5,7 @@ import { SessionSidebar } from "@/components/sidebar/SessionSidebar"
 import { MessageList } from "@/components/chat/MessageList"
 import { ChatInput } from "@/components/chat/ChatInput"
 import { Button } from "@/components/ui/button"
+import { GithubRepoLink } from "@/components/GithubRepoLink"
 import { useSessions } from "@/hooks/useSessions"
 import { useChatStream } from "@/hooks/useChatStream"
 import { useAuth } from "@/hooks/useAuth"
@@ -148,6 +149,10 @@ export function AppLayout() {
             {sessions.find((s) => s.id === activeId)?.title || "古典诗词鉴赏助手"}
           </h1>
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            <GithubRepoLink
+              label="GitHub"
+              className="h-9 shrink-0 rounded-md px-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+            />
             {user && (
               <span className="mr-2 hidden text-xs text-muted-foreground sm:inline">
                 {user.is_guest ? "游客" : user.email} · {user.plan}

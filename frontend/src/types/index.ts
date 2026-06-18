@@ -12,11 +12,18 @@ export interface Session {
   updated_at: string
 }
 
+export interface SubIntent {
+  text: string
+  intent: string
+}
+
 export interface Message {
   id: string
   role: "user" | "assistant"
   content: string
   intent?: string | null
+  sub_intents?: SubIntent[] | null
+  is_compound?: boolean
   sources?: SourceRef[]
   created_at: string
 }
@@ -27,6 +34,8 @@ export interface SessionDetail extends Session {
 
 export type StreamPhase =
   | "classifying"
+  | "decomposing"
+  | "executing"
   | "describing"
   | "retrieving"
   | "tooling"
@@ -36,6 +45,8 @@ export type StreamPhase =
 
 export const PHASE_LABELS: Record<StreamPhase, string> = {
   classifying: "正在理解问题…",
+  decomposing: "正在拆解问题…",
+  executing: "正在处理多个子任务…",
   describing: "正在理解画面…",
   retrieving: "正在检索知识库…",
   tooling: "正在调用工具…",

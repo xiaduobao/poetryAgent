@@ -344,3 +344,86 @@ python scripts/download_models.py
 **答**：气泡内容 `<div>`（圆角背景层）缺少闭合 `</div>`，导致 JSX 结构不完整。补全后即可正常编译。
 
 **标签**：`other`
+
+---
+
+## 2026-06-18 · 助手回复排版优化（JSON 卡片化）
+
+**问**：助手文字输出排版差，末尾 JSON 代码块不美观，需要更好格式。
+
+**答**：
+1. 前端 `parseStructuredOutput.ts` 解析末尾 ` ```json ` 块，正文继续 Markdown 渲染
+2. 新增 `PoemCard` 组件：诗题、作者/朝代/体裁、主旨、名句（引用样式）、鉴赏要点分段展示
+3. 流式输出时用 `stripStreamingJsonBlock` 隐藏未完成的 JSON
+4. `prompts.py` 要求模型正文用 `###` 标题、列表、引用块分段，JSON 仅作结构化补充
+5. `index.css` 增强 prose 的 h3、列表、blockquote 样式
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 意图识别完整重构（复合问题）
+
+**问**：用户单条消息可能含多个问题，现有意图识别只能选一个路径，如何优化？
+
+**答**：
+1. **规则引擎**：`app/agent/intent_rules.py` 按 priority 匹配；`strip_user_input()` 去 `<user_input>` 包裹后再分类
+2. **结构化分类**：`app/agent/intent_classifier.py` 输出 JSON（intent + confidence），替代子串解析
+3. **复合流水线**（`COMPOUND_INTENT_ENABLED=true`）：`decompose_query` → 并行 `execute_subtask` → `compound_synthesis` 流式合成
+4. **评测**：`tests/eval/intent_golden_set.json` + `python -m app.eval.intent_eval --report`
+5. **前端**：复合问题展示多个 intent badge；SSE 新增 `decomposing` / `executing` / `subtasks` 事件
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 诗词摘要卡片 UI 美化
+
+**问**：聊天里「诗词摘要」结构化卡片样式太丑（多层边框、系统字体、表单感强）。
+
+**答**：
+1. 重写 `frontend/src/components/chat/PoemCard.tsx`：去掉「诗词摘要」顶栏与内层嵌套边框，改为左侧渐变竖线 + 宣纸渐变背景的卷轴式卡片。
+2. 诗题、正文、名句改用 **Noto Serif SC** 衬线体（`index.html` 引入 Google Font），增大字距、居中排诗。
+3. 作者/朝代/体裁/主旨改为圆角 chip，名句用「」书名号样式；样式集中在 `frontend/src/index.css` 的 `.poem-card*` 类。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 首页添加 GitHub 项目链接
+
+**问**：在首页添加链接到 GitHub 项目 README（https://github.com/xiaduobao/poetryAgent）。
+
+**答**：
+1. 新增 `frontend/src/lib/siteLinks.ts` 常量 `GITHUB_REPO_URL`。
+2. 空状态页 `EmptyState.tsx` 底部增加「查看 GitHub 项目 README」文字链接。
+3. 顶栏 `AppLayout.tsx` 增加 GitHub 图标按钮，任意页面均可跳转。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · GitHub 链接改为常驻入口
+
+**问**：GitHub 链接不能只在空状态页显示，开始对话后就消失，需要时刻可访问。
+
+**答**：
+1. 抽取 `GithubRepoLink` 组件（`frontend/src/components/GithubRepoLink.tsx`）。
+2. **顶栏**始终显示「GitHub」文字链接；**输入框下方**常驻「GitHub 项目 README」；**侧边栏底部**（桌面端）同样常驻。
+3. 移除 `EmptyState` 中仅空态可见的链接，避免对话开始后消失。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 创作诗词正文与卡片衔接优化
+
+**问**：创作诗词时，上方说明文字与下方卡片内容重复、视觉突兀。
+
+**答**：
+1. `parseStructuredOutput.ts` 新增 `stripDuplicatedPoemFromMarkdown`：JSON 含 `lines` 时自动去掉正文中重复的诗句/诗题。
+2. `PoemCard` 改为消息气泡内的分隔区块（顶部分割线 + 衬线排诗），去掉独立宣纸色卡片与左侧色条。
+3. `MessageBubble` 将 prose 与 `PoemCard` 分块渲染，避免 prose 样式污染卡片。
+4. `prompts.py` 创作提示改为：正文只写创作说明，诗句仅放 JSON `lines`。
+
+**标签**：`other`

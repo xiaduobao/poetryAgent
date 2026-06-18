@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn, formatRelativeTime, groupSessionsByDate } from "@/lib/utils"
+import { GithubRepoLink } from "@/components/GithubRepoLink"
 import type { Session } from "@/types"
 
 interface SessionSidebarProps {
@@ -177,6 +178,13 @@ export function SessionSidebar({
           </div>
         ))}
       </ScrollArea>
+
+      <div className="safe-area-bottom shrink-0 border-t px-3 py-2.5">
+        <GithubRepoLink
+          className="w-full justify-center text-xs"
+          label="GitHub 项目 README"
+        />
+      </div>
 
       <Dialog open={!!renameTarget} onOpenChange={() => setRenameTarget(null)}>
         <DialogContent>
