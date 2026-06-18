@@ -1,9 +1,19 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react"
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react"
 import { ImagePlus, Loader2, Send, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { GithubRepoLink } from "@/components/GithubRepoLink"
+import type { PromptExample } from "@/lib/promptExamples"
 import { PromptChips } from "./PromptChips"
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -16,7 +26,13 @@ interface ChatInputProps {
   maxLength: number
   draft: string
   onDraftChange: (text: string) => void
-  suggestions?: string[]
+  suggestions?: PromptExample[]
+  imagePickHint?: string | null
+  onImageAttached?: () => void
+}
+
+export interface ChatInputHandle {
+  openImagePicker: () => void
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -36,15 +52,21 @@ function readFileAsBase64(file: File): Promise<string> {
   })
 }
 
-export function ChatInput({
-  onSend,
-  onStop,
-  streaming,
-  maxLength,
-  draft,
-  onDraftChange,
-  suggestions = [],
-}: ChatInputProps) {
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
+  function ChatInput(
+    {
+      onSend,
+      onStop,
+      streaming,
+      maxLength,
+      draft,
+      onDraftChange,
+      suggestions = [],
+      imagePickHint,
+      onImageAttached,
+    },
+    ref,
+  ) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragCounterRef = useRef(0)
@@ -53,13 +75,22 @@ export function ChatInput({
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
+  const [pendingImageHint, setPendingImageHint] = useState<string | null>(null)
+
+  useImperativeHandle(ref, () => ({
+    openImagePicker: () => fileInputRef.current?.click(),
+  }))
+
+  const activeImageHint = imagePickHint || pendingImageHint
+  const requiresImage = Boolean(activeImageHint)
 
   const overLimit = draft.length > maxLength
   const canSend =
     (draft.trim().length > 0 || Boolean(imageBase64)) &&
     !overLimit &&
     !streaming &&
-    !imageError
+    !imageError &&
+    (!requiresImage || Boolean(imageBase64))
 
   useEffect(() => {
     const el = textareaRef.current
@@ -77,6 +108,7 @@ export function ChatInput({
     setImagePreview(null)
     setImageBase64(null)
     setImageError(null)
+    setPendingImageHint(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
     }
@@ -106,6 +138,8 @@ export function ChatInput({
       const base64 = await readFileAsBase64(file)
       setImageBase64(base64)
       setImagePreview(URL.createObjectURL(file))
+      setPendingImageHint(null)
+      onImageAttached?.()
     } catch {
       setImageError("图片读取失败，请重试")
       if (fileInputRef.current) fileInputRef.current.value = ""
@@ -176,9 +210,21 @@ export function ChatInput({
     }
   }
 
-  const handleSuggestionSelect = (text: string) => {
-    const trimmed = text.trim()
+  const handleSuggestionSelect = (example: PromptExample) => {
+    const trimmed = example.text.trim()
     if (streaming || !trimmed || trimmed.length > maxLength) return
+
+    if (example.type === "image") {
+      onDraftChange(trimmed)
+      setPendingImageHint(
+        example.hint ?? "请先选择一张图片，再点击发送",
+      )
+      fileInputRef.current?.click()
+      return
+    }
+
+    setPendingImageHint(null)
+
     onSend(trimmed)
     onDraftChange("")
     clearImage()
@@ -238,6 +284,9 @@ export function ChatInput({
         )}
         {imageError && (
           <p className="mb-2 text-xs text-destructive">{imageError}</p>
+        )}
+        {activeImageHint && !imageBase64 && !imageError && (
+          <p className="mb-2 text-xs text-muted-foreground">{activeImageHint}</p>
         )}
         <Textarea
           ref={textareaRef}
@@ -320,4 +369,5 @@ export function ChatInput({
       </div>
     </div>
   )
-}
+},
+)

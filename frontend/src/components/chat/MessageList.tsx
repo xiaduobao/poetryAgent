@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react"
 import { MessageBubble } from "./MessageBubble"
 import { EmptyState } from "./EmptyState"
+import type { PromptExample } from "@/lib/promptExamples"
 import type { Message, StreamPhase } from "@/types"
 import { PHASE_LABELS } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -12,7 +13,7 @@ interface MessageListProps {
   phase: StreamPhase
   error: string | null
   onRetry: () => void
-  onExampleClick: (text: string) => void
+  onExampleClick: (example: PromptExample) => void
 }
 
 export function MessageList({

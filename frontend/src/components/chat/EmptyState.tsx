@@ -1,8 +1,8 @@
-import { PROMPT_EXAMPLES } from "@/lib/promptExamples"
+import { PROMPT_EXAMPLES, type PromptExample } from "@/lib/promptExamples"
 import { PromptChips } from "./PromptChips"
 
 interface EmptyStateProps {
-  onExampleClick: (text: string) => void
+  onExampleClick: (example: PromptExample) => void
 }
 
 export function EmptyState({ onExampleClick }: EmptyStateProps) {

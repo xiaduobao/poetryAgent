@@ -427,3 +427,16 @@ python scripts/download_models.py
 4. `prompts.py` 创作提示改为：正文只写创作说明，诗句仅放 JSON `lines`。
 
 **标签**：`other`
+
+---
+
+## 2026-06-18 · 配图示例点击需先上传图片（方案 A）
+
+**问**：点击「上传风景照，写一首五言绝句」会直接发纯文字，未要求选图。
+
+**答**：
+1. `promptExamples.ts` 示例改为 `PromptExample` 类型（`text` / `image`）。
+2. 点击 `image` 类型：填入输入框、弹出文件选择器、显示提示，**不自动发送**；未选图时发送按钮禁用。
+3. `ChatInput` 暴露 `openImagePicker()`；`PromptChips` 配图示例显示 📷 图标。
+
+**标签**：`other`

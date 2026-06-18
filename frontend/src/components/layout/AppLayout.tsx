@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react"
-import { getFollowUpSuggestions } from "@/lib/promptExamples"
+import { useMemo, useRef, useState } from "react"
+import { getFollowUpSuggestions, type PromptExample } from "@/lib/promptExamples"
 import { LogOut, Menu, Moon, Sun } from "lucide-react"
 import { SessionSidebar } from "@/components/sidebar/SessionSidebar"
 import { MessageList } from "@/components/chat/MessageList"
-import { ChatInput } from "@/components/chat/ChatInput"
+import { ChatInput, type ChatInputHandle } from "@/components/chat/ChatInput"
 import { Button } from "@/components/ui/button"
 import { GithubRepoLink } from "@/components/GithubRepoLink"
 import { useSessions } from "@/hooks/useSessions"
@@ -38,7 +38,9 @@ export function AppLayout() {
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
+  const [imagePickHint, setImagePickHint] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const chatInputRef = useRef<ChatInputHandle>(null)
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains("dark"),
   )
@@ -88,10 +90,27 @@ export function AppLayout() {
     refresh(query || undefined)
   }
 
-  const handleSuggestionClick = (text: string) => {
-    const trimmed = text.trim()
-    if (streaming || !trimmed) return
-    void handleSend(trimmed)
+  const handleDraftChange = (text: string) => {
+    setDraft(text)
+    if (!text.trim()) {
+      setImagePickHint(null)
+    }
+  }
+
+  const handlePromptSelect = (example: PromptExample) => {
+    if (streaming) return
+
+    if (example.type === "image") {
+      setDraft(example.text)
+      setImagePickHint(
+        example.hint ?? "请先选择一张风景照片，再点击发送",
+      )
+      chatInputRef.current?.openImagePicker()
+      return
+    }
+
+    setImagePickHint(null)
+    void handleSend(example.text)
   }
 
   return (
@@ -179,17 +198,20 @@ export function AppLayout() {
           phase={phase}
           error={error}
           onRetry={() => retry(activeId)}
-          onExampleClick={handleSuggestionClick}
+          onExampleClick={handlePromptSelect}
         />
 
         <ChatInput
+          ref={chatInputRef}
           draft={draft}
-          onDraftChange={setDraft}
+          onDraftChange={handleDraftChange}
           onSend={handleSend}
           onStop={stop}
           streaming={streaming}
           maxLength={maxLength}
           suggestions={followUpSuggestions}
+          imagePickHint={imagePickHint}
+          onImageAttached={() => setImagePickHint(null)}
         />
       </main>
     </div>

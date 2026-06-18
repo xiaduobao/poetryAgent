@@ -1,13 +1,33 @@
-export const PROMPT_EXAMPLES = [
-  "请赏析《登高》",
-  "介绍杜甫",
-  "李白和杜甫的诗歌风格有什么区别？",
-  "查找《枫桥夜泊》的原文和注释",
-  "推荐几首关于思乡的诗",
-  "「渚清沙白」中的「渚」是什么意思？",
-  "帮我写一首关于春天的五言绝句",
-  "上传风景照，写一首五言绝句",
+export type PromptExample =
+  | { type: "text"; text: string }
+  | { type: "image"; text: string; hint?: string }
+
+export const PROMPT_EXAMPLES: PromptExample[] = [
+  { type: "text", text: "请赏析《登高》" },
+  { type: "text", text: "介绍杜甫" },
+  { type: "text", text: "李白和杜甫的诗歌风格有什么区别？" },
+  { type: "text", text: "查找《枫桥夜泊》的原文和注释" },
+  { type: "text", text: "推荐几首关于思乡的诗" },
+  { type: "text", text: "「渚清沙白」中的「渚」是什么意思？" },
+  { type: "text", text: "帮我写一首关于春天的五言绝句" },
+  {
+    type: "image",
+    text: "上传风景照，写一首五言绝句",
+    hint: "请先选择一张风景照片，再点击发送",
+  },
 ]
+
+export function promptExampleKey(example: PromptExample): string {
+  return example.text
+}
+
+export function asTextPrompt(text: string): PromptExample {
+  return { type: "text", text }
+}
+
+export function resolvePromptExample(text: string): PromptExample {
+  return PROMPT_EXAMPLES.find((item) => item.text === text) ?? asTextPrompt(text)
+}
 
 const INTENT_FOLLOW_UPS: Record<string, string[]> = {
   tool_writing: [
@@ -94,7 +114,7 @@ function contextFollowUps(userText: string, assistantText: string): string[] {
 export function getFollowUpSuggestions(
   messages: { role: string; content: string; intent?: string | null }[],
   max = 3,
-): string[] {
+): PromptExample[] {
   if (messages.length === 0) return []
 
   const recentUserTexts = messages
@@ -110,29 +130,33 @@ export function getFollowUpSuggestions(
     .reverse()
     .find((m) => m.role === "user")
 
-  const candidates: string[] = []
+  const candidates: PromptExample[] = []
 
   if (lastAssistant?.intent && INTENT_FOLLOW_UPS[lastAssistant.intent]) {
-    candidates.push(...INTENT_FOLLOW_UPS[lastAssistant.intent])
+    candidates.push(
+      ...INTENT_FOLLOW_UPS[lastAssistant.intent].map(asTextPrompt),
+    )
   }
 
   if (lastUser && lastAssistant) {
     candidates.push(
-      ...contextFollowUps(lastUser.content, lastAssistant.content),
+      ...contextFollowUps(lastUser.content, lastAssistant.content).map(
+        asTextPrompt,
+      ),
     )
   }
 
   candidates.push(...PROMPT_EXAMPLES)
 
   const seen = new Set<string>()
-  const result: string[] = []
+  const result: PromptExample[] = []
 
-  for (const text of candidates) {
-    const trimmed = text.trim()
+  for (const example of candidates) {
+    const trimmed = example.text.trim()
     if (!trimmed || seen.has(trimmed)) continue
     if (wasAsked(trimmed, recentUserTexts)) continue
     seen.add(trimmed)
-    result.push(trimmed)
+    result.push(example)
     if (result.length >= max) break
   }
 
