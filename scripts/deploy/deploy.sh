@@ -72,15 +72,18 @@ fi
 REMOTE="${ECS_USER}@${ECS_HOST}"
 RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 
-# _fix_app_data_permissions() {
-#     echo "==> 修正 data/ 目录权限（app=1000, postgres=70, redis=999）..."
-#     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && bash scripts/deploy/fix-data-permissions.sh"
-# }
+_fix_app_data_permissions() {
+    if ! ssh "${SSH_OPTS[@]}" "${REMOTE}" "test -d '${REMOTE_DIR}/data'"; then
+        echo "==> 跳过 data 权限修正（远端尚无 data/ 目录）"
+        return 0
+    fi
+    echo "==> 修正 data/ 目录权限（app=1000, postgres=70, redis=999）..."
+    ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && bash scripts/deploy/fix-data-permissions.sh"
+}
 
 _sync_data() {
-    echo "==> rsync 同步 data/（排除 postgres/redis，属主映射为 1000:1000）..."
+    echo "==> rsync 同步 data/（排除 postgres/redis；权限由 fix-data-permissions.sh 修正）..."
     rsync -avz \
-        --chown=1000:1000 \
         --exclude 'postgres/' \
         --exclude 'redis/' \
         -e "${RSYNC_SSH}" \
@@ -95,7 +98,6 @@ _sync_models() {
     fi
     echo "==> rsync 同步 data/models/（约数百 MB，请耐心等待）..."
     rsync -avz --progress \
-        --chown=1000:1000 \
         -e "${RSYNC_SSH}" \
         "${PROJECT_ROOT}/data/models/" \
         "${REMOTE}:${REMOTE_DIR}/data/models/"
@@ -175,7 +177,7 @@ fi
 if [[ "${ENV_ONLY}" == true ]]; then
     _sync_compose_config
     _upload_prod_env
-    #_fix_app_data_permissions
+    _fix_app_data_permissions
     echo "==> 重建容器以加载新 .env.prod（force-recreate，非 restart）..."
     _remote_recreate
     ssh "${SSH_OPTS[@]}" "${REMOTE}" "cd '${REMOTE_DIR}' && ./scripts/deploy/remote-compose.sh health" || true
@@ -184,8 +186,9 @@ if [[ "${ENV_ONLY}" == true ]]; then
 fi
 
 if [[ "${MODELS_ONLY}" == true ]]; then
+    _sync_compose_config
     _sync_models
-   # _fix_app_data_permissions
+    _fix_app_data_permissions
     echo "==> 重建 poetry-agent 以重新挂载 models..."
     _remote_recreate
     ssh "${SSH_OPTS[@]}" "${REMOTE}" bash -s "${REMOTE_DIR}" <<'EOS'
@@ -215,7 +218,7 @@ elif [[ "${WITH_MODELS}" == true ]]; then
     _sync_models
 fi
 
-# _fix_app_data_permissions
+_fix_app_data_permissions
 
 _upload_prod_env
 _remote_pull_up

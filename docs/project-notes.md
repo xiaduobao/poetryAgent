@@ -242,3 +242,105 @@ python scripts/download_models.py
 ```
 
 **标签**：`rag` `config`
+
+---
+
+## 2026-06-18 · 前端手机端适配
+
+**问**：前端页面做一下适配，可以适合手机页面。
+
+**答**：在已有移动端侧栏抽屉（`md:hidden` + 遮罩）基础上，补齐小屏体验：
+
+- `index.html`：`viewport-fit=cover`、主题色 meta
+- `index.css`：`100dvh`、横向溢出隐藏、iOS 安全区 `.safe-area-top/bottom`、Markdown 表格横向滚动
+- `AppLayout`：顶栏/游客条紧凑；侧栏传 `onClose` 关闭按钮
+- `SessionSidebar`：触控下会话菜单常显；宽度 `max-w-[85vw]`
+- `ChatInput`：小屏仅图标按钮、字数统计紧凑、输入框 `text-base` 防 iOS 缩放
+- `MessageList` / `MessageBubble` / `EmptyState` / `PromptChips` / `AuthPage` / `Dialog`：减小内边距与字号
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 输入框支持图片拖拽
+
+**问**：输入框可以支持图片拖拽放入。
+
+**答**：`ChatInput` 输入区域支持将 JPEG/PNG/WebP 图片拖入，校验规则与点击上传一致（格式、4MB 上限）。拖入时显示高亮与「松开以添加图片」提示；逻辑复用 `processImageFile`，与文件选择共用。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 推荐词点击自动发送
+
+**问**：点击推荐词自动发送。
+
+**答**：空状态示例词与对话后跟进推荐词点击后直接调用 `handleSend` / `onSend`，不再仅填入输入框；流式输出中会忽略点击。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · LangSmith 403 Forbidden
+
+**问**：日志 `langsmith.client` WARNING，`403 Forbidden` POST `runs/multipart`。
+
+**答**：LangSmith 追踪上报失败，不影响对话/RAG。`.env` 里 `LANGSMITH_TRACING=true` 但 API Key 无效/过期时常见。最快：`LANGSMITH_TRACING=false` 重启；要用追踪则在 smith.langchain.com 重新生成 Key。见 `docs/deploy-troubleshooting.md` §12.1。
+
+**标签**：`config`
+
+---
+
+## 2026-06-18 · 手机端：用户提问可见 + JSON 换行
+
+**问**：提示词不见了；JSON 里 appreciation 太长要换行；手机适配差。
+
+**答**：
+
+1. **提问不见**：长回复滚到底，用户气泡被顶出视野 → 消息区顶部固定「你的提问」条；用户气泡加「你」标签
+2. **JSON 横向滚动**：`.prose pre/code` 改 `pre-wrap` + `word-break`；助手气泡手机端全宽
+3. **手机滚动**：消息列表改用原生 `overflow-y-auto`，iOS 触控更顺
+4. **Prompt**：创作 JSON 的 `appreciation` 提示模型用 `\n` 分段
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 用户消息左对齐、去掉「你」标签
+
+**问**：去掉气泡里的「你」字；我发的消息要和 AI 内容对齐。
+
+**答**：`MessageBubble` 用户消息改为与助手回复同宽、左对齐，移除「你」标签，保留紫色背景区分角色。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 用户消息右对齐、宽度随内容
+
+**问**：用户气泡太丑，要右边对齐、不要铺满。
+
+**答**：用户消息 `justify-end` + `w-fit max-w-[85%]`，按文字收缩；AI 回复仍左对齐全宽展示。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 用户消息与 AI 内容右缘对齐
+
+**问**：用户气泡右缘要与下方 AI 内容区右缘对齐（如图红线）。
+
+**答**：用户与 AI 共用同一列宽（`max-w-3xl` 内容区全宽）；AI `w-full`，用户外层 `flex justify-end` + 内层 `w-fit`，右缘对齐、宽度随文字。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · MessageBubble 解析错误修复
+
+**问**：Vite 报 `[PARSE_ERROR] Unexpected token` 于 `MessageBubble.tsx:90`。
+
+**答**：气泡内容 `<div>`（圆角背景层）缺少闭合 `</div>`，导致 JSX 结构不完整。补全后即可正常编译。
+
+**标签**：`other`

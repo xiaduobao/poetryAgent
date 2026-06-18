@@ -87,6 +87,12 @@ export function AppLayout() {
     refresh(query || undefined)
   }
 
+  const handleSuggestionClick = (text: string) => {
+    const trimmed = text.trim()
+    if (streaming || !trimmed) return
+    void handleSend(trimmed)
+  }
+
   return (
     <div className="flex h-svh w-full overflow-hidden bg-background text-foreground">
       {/* Desktop sidebar */}
@@ -123,12 +129,13 @@ export function AppLayout() {
             onCreate={handleCreate}
             onRename={renameSession}
             onDelete={handleDelete}
+            onClose={() => setSidebarOpen(false)}
           />
         </div>
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
+        <header className="safe-area-top flex h-12 shrink-0 items-center gap-2 border-b px-3 sm:h-14 sm:gap-3 sm:px-4">
           <Button
             variant="ghost"
             size="icon"
@@ -137,10 +144,10 @@ export function AppLayout() {
           >
             <Menu className="h-5 w-5" />
           </Button>
-          <h1 className="truncate text-sm font-semibold">
+          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
             {sessions.find((s) => s.id === activeId)?.title || "古典诗词鉴赏助手"}
           </h1>
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             {user && (
               <span className="mr-2 hidden text-xs text-muted-foreground sm:inline">
                 {user.is_guest ? "游客" : user.email} · {user.plan}
@@ -156,8 +163,8 @@ export function AppLayout() {
         </header>
 
         {user?.is_guest && (
-          <div className="border-b bg-muted/40 px-4 py-2 text-center text-xs text-muted-foreground">
-            当前为游客模式，注册登录后可保存更多对话并提升每日额度
+          <div className="border-b bg-muted/40 px-3 py-1.5 text-center text-[11px] leading-snug text-muted-foreground sm:px-4 sm:py-2 sm:text-xs">
+            游客模式：注册登录可保存更多对话并提升每日额度
           </div>
         )}
 
@@ -167,7 +174,7 @@ export function AppLayout() {
           phase={phase}
           error={error}
           onRetry={() => retry(activeId)}
-          onExampleClick={setDraft}
+          onExampleClick={handleSuggestionClick}
         />
 
         <ChatInput

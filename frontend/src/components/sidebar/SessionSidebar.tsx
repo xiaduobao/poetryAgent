@@ -5,6 +5,7 @@ import {
   Pencil,
   Search,
   Trash2,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,6 +38,7 @@ interface SessionSidebarProps {
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
   className?: string
+  onClose?: () => void
 }
 
 export function SessionSidebar({
@@ -50,6 +52,7 @@ export function SessionSidebar({
   onRename,
   onDelete,
   className,
+  onClose,
 }: SessionSidebarProps) {
   const [renameTarget, setRenameTarget] = useState<Session | null>(null)
   const [renameValue, setRenameValue] = useState("")
@@ -77,15 +80,26 @@ export function SessionSidebar({
   return (
     <aside
       className={cn(
-        "flex h-full w-72 shrink-0 flex-col border-r bg-muted/30",
+        "flex h-full w-72 max-w-[min(18rem,85vw)] shrink-0 flex-col border-r bg-muted/30",
         className,
       )}
     >
-      <div className="flex items-center gap-2 border-b p-3">
+      <div className="safe-area-top flex items-center gap-2 border-b p-3">
         <Button className="flex-1" onClick={onCreate}>
           <MessageSquarePlus className="h-4 w-4" />
           新建对话
         </Button>
+        {onClose && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 md:hidden"
+            onClick={onClose}
+            aria-label="关闭侧边栏"
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        )}
       </div>
 
       <div className="relative px-3 py-2">
@@ -138,7 +152,7 @@ export function SessionSidebar({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="mr-1 h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100"
+                      className="mr-1 h-8 w-8 shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100"
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </Button>

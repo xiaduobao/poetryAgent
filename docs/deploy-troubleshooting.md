@@ -286,10 +286,61 @@ sudo nginx -t && sudo systemctl reload nginx
 | Nginx 502 | nginx 未运行 | `systemctl start nginx` 或 `./scripts/deploy/setup-ecs.sh` |
 | HuggingFace 模型下载慢/失败 | 国内网络 | `.env` / `.env.prod` 设 `HF_ENDPOINT=https://hf-mirror.com` |
 | LangSmith 追踪混乱 | dev/prod 同一 project | dev 用 `poetry-agent-dev`，prod 用 `poetry-agent-prod` |
+| LangSmith `403 Forbidden` | API Key 无效/过期、无写权限 | 见下方 **§12.1**；暂不需要追踪时 `LANGSMITH_TRACING=false` |
 | `docker compose exec` 报 no configuration file | 不在项目目录 | 先 `cd /opt/poetry-agent` |
 | 混合检索很慢（10s+） | 冷启动加载模型 | 预下载模型到 `data/models/`，生产同步 `--with-data` |
 | ECS 查看 Postgres | PG 在 Docker 内 | `docker exec -it poetry-agent-postgres-1 psql -U poetry -d poetry_agent` |
 | Redis `(unhealthy)` | AOF 损坏 / 磁盘满 / 仍在加载 | 见下方 **§13** |
+
+---
+
+## 12.1 LangSmith `403 Forbidden`（追踪上报失败）
+
+### 现象
+
+```text
+WARNING langsmith.client - Failed to send compressed multipart ingest: ...
+HTTPError('403 Client Error: Forbidden for url: https://api.smith.langchain.com/runs/multipart', ...)
+```
+
+### 说明
+
+- **不影响**诗词对话、RAG、看图作诗等主功能，只是 LangSmith 后台看不到本次 Run 追踪。
+- 出现条件：`.env` / `.env.prod` 中 `LANGSMITH_TRACING=true` 且配置了 `LANGSMITH_API_KEY`。
+
+### 常见原因
+
+1. API Key **已过期、被撤销或复制不完整**
+2. Key 所属 LangSmith **工作区/账号**与 `LANGSMITH_PROJECT` 不匹配
+3. 免费额度用尽或账号受限（较少见，通常仍表现为 403/401）
+
+### 处理
+
+**方案 A — 暂时关闭追踪（最快消除告警）**
+
+```bash
+# .env 或 .env.prod
+LANGSMITH_TRACING=false
+```
+
+重启服务：`uvicorn` 本地重载，或 ECS 上 `docker compose restart app`。
+
+**方案 B — 继续用追踪**
+
+1. 登录 [smith.langchain.com](https://smith.langchain.com/settings) → Settings → API Keys
+2. 新建 Personal Access Token，完整复制到 `LANGSMITH_API_KEY`（`lsv2_pt_...`）
+3. 确认 `LANGSMITH_PROJECT` 名称（如 `poetry-agent-dev` / `poetry-agent-prod`）；首次写入会自动建项目
+4. 重启应用，发一条 chat 请求，在 LangSmith 控制台确认 Run 出现
+
+**验证 Key（可选）**
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "x-api-key: $LANGSMITH_API_KEY" \
+  https://api.smith.langchain.com/info
+```
+
+返回 `200` 表示 Key 有效；`403` 则需更换 Key。
 
 ---
 
@@ -766,3 +817,129 @@ docker inspect --format='{{.Config.Image}}' poetry-agent-poetry-agent-1
 ```
 
 **标签**：`deploy` | `docker`
+
+---
+
+## 2026-06-17 · deploy.sh 恢复 fix-data-permissions
+
+**问**：发布脚本 `deploy.sh` 被注释掉权限修复，与文档不一致。
+
+**答**：`save local` 提交误将 `_fix_app_data_permissions` 整段注释。已恢复，并在 `--models-only` 路径增加 `_sync_compose_config`（确保 models 卷挂载配置同步到 ECS）。
+
+| 命令 | fix-perms | 说明 |
+|------|-----------|------|
+| `deploy.sh`（默认） | ✅ rsync 后 | 远端无 `data/` 时自动跳过 |
+| `--with-data` / `--with-models` | ✅ | 同步 data 后执行 |
+| `--models-only` | ✅ | 同步 compose + models 后执行 |
+| `--env-only` | ✅ | recreate 前执行 |
+| `--pull` | ❌ | 无文件同步 |
+
+**标签**：`deploy` | `docker` | `config`
+
+---
+
+## 2026-06-17 · macOS rsync 不支持 --chown
+
+**问**：本地执行 `deploy.sh --models-only` 报错 `rsync: --chown=1000:1000: unknown option`（client=2.6.9）。
+
+**答**：macOS 自带 rsync 2.6.9 无 `--chown`（需 3.1+）。已从 `deploy.sh` 的 `_sync_data` / `_sync_models` 移除该选项；同步完成后由远端 `fix-data-permissions.sh` 统一修正属主（app=1000, postgres=70, redis=999）。
+
+```bash
+./scripts/deploy/deploy.sh --models-only   # 同步后自动 fix-perms
+```
+
+若需新版 rsync：`brew install rsync`（可选，非必须）。
+
+**标签**：`deploy` | `docker` | `config`
+
+---
+
+## 2026-06-17 · SSH 本地端口转发访问 ECS
+
+**问**：如何把本地 `localhost:3000` 转发到 ECS `8.134.168.40:80`？
+
+**答**：SSH 本地转发（`-L`），将本机 3000 映射到 ECS 上 nginx 的 80：
+
+```bash
+# 前台（终端保持打开）
+ssh -N -L 3000:127.0.0.1:80 -p 22 -i ~/.ssh/mac_bob.pem root@8.134.168.40
+
+# 后台
+ssh -f -N -L 3000:127.0.0.1:80 -p 22 -i ~/.ssh/mac_bob.pem root@8.134.168.40
+```
+
+浏览器访问：`http://localhost:3000/`
+
+关闭隧道：
+
+```bash
+# 查 PID 并结束
+pgrep -fl 'ssh.*3000:127.0.0.1:80'
+kill <PID>
+```
+
+**标签**：`deploy` | `config`
+
+---
+
+## 2026-06-18 · Certbot 为 cnpoetry.top 配置 HTTPS
+
+**问**：如何用 Certbot（Let's Encrypt）为 `cnpoetry.top` 配置 HTTPS（Ubuntu ECS）？
+
+**答**：
+
+**1. 前置**
+
+| 项 | 说明 |
+|----|------|
+| DNS | `cnpoetry.top`、`www.cnpoetry.top` A 记录 → ECS 公网 IP（如 `8.134.168.40`） |
+| 安全组 | 放行 **80**、**443** |
+| 服务 | `curl http://127.0.0.1/api/v1/health` 已返回 ok |
+
+**2. 本地一键（推荐）**
+
+在 `scripts/deploy/deploy.env` 增加：
+
+```bash
+DOMAIN=cnpoetry.top
+CERTBOT_EMAIL=your-email@example.com
+INCLUDE_WWW=true
+```
+
+```bash
+./scripts/deploy/setup-ssl-certbot.sh          # 申请并配置 HTTPS
+./scripts/deploy/setup-ssl-certbot.sh --dry-run # 仅检查 DNS/nginx
+```
+
+**3. ECS 上手动（Ubuntu）**
+
+```bash
+# 安装 Certbot nginx 插件
+sudo apt update
+sudo apt install -y certbot python3-certbot-nginx
+
+# 确保 nginx server_name 含域名（见 scripts/deploy/nginx/poetry-agent.domain.conf）
+sudo nginx -t && sudo systemctl reload nginx
+
+# 申请证书（自动改 nginx、开启 443、HTTP→HTTPS 跳转）
+sudo certbot --nginx -d cnpoetry.top -d www.cnpoetry.top
+
+# 验证
+curl -sf https://cnpoetry.top/api/v1/health
+sudo certbot certificates
+sudo systemctl status certbot.timer   # 自动续期
+```
+
+**4. 更新应用 CORS**
+
+`.env.prod`：
+
+```bash
+CORS_ORIGINS=https://cnpoetry.top,https://www.cnpoetry.top
+```
+
+```bash
+./scripts/deploy/deploy.sh --env-only
+```
+
+**标签**：`deploy` | `nginx` | `config`

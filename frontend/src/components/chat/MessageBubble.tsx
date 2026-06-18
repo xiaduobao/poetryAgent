@@ -5,6 +5,7 @@ import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { formatUserDisplay } from "@/lib/formatUserMessage"
 import { INTENT_LABELS } from "@/types"
 import type { Message } from "@/types"
 import { SourcePanel } from "@/components/chat/SourcePanel"
@@ -25,19 +26,27 @@ export function MessageBubble({ message, streaming }: MessageBubbleProps) {
   }
 
   return (
-    <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
+    <div className="flex w-full min-w-0">
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-3 text-sm",
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "border bg-card text-card-foreground",
+          "min-w-0 w-full",
+          isUser ? "flex justify-end" : "",
         )}
       >
+        <div
+          className={cn(
+            "min-w-0 rounded-2xl px-3 py-2.5 text-sm sm:px-4 sm:py-3",
+            isUser
+              ? "w-fit max-w-full bg-primary text-primary-foreground"
+              : "w-full border bg-card text-card-foreground",
+          )}
+        >
         {isUser ? (
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {formatUserDisplay(message.content)}
+          </p>
         ) : (
-          <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+          <div className="prose prose-sm dark:prose-invert max-w-none min-w-0 break-words [overflow-wrap:anywhere]">
             {message.content ? (
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {message.content}
@@ -75,6 +84,7 @@ export function MessageBubble({ message, streaming }: MessageBubbleProps) {
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   )

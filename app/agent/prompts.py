@@ -47,7 +47,7 @@ STRUCTURED_OUTPUT_HINT = """
   "genre": "体裁",
   "theme": "主旨",
   "famous_lines": ["名句"],
-  "appreciation": "鉴赏要点摘要"
+  "appreciation": "鉴赏要点摘要（较长时用\\n分段，每段不超过两句）"
 }}
 ```
 """
@@ -69,7 +69,7 @@ WRITING_OUTPUT_HINT = """
   "theme": "主旨",
   "lines": ["第一句", "第二句", "第三句", "第四句"],
   "famous_lines": ["可选名句"],
-  "appreciation": "鉴赏要点摘要"
+  "appreciation": "鉴赏要点摘要（较长时用\\n分段，每段不超过两句）"
 }}
 ```
 """

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react"
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react"
 import { ImagePlus, Loader2, Send, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -46,7 +46,9 @@ export function ChatInput({
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dragCounterRef = useRef(0)
   const [focused, setFocused] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
@@ -79,9 +81,8 @@ export function ChatInput({
     }
   }
 
-  const handleImageSelect = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const processImageFile = async (file: File) => {
+    if (streaming) return
 
     setImageError(null)
 
@@ -110,6 +111,56 @@ export function ChatInput({
     }
   }
 
+  const handleImageSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await processImageFile(file)
+  }
+
+  const hasImageFiles = (e: DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes("Files")
+
+  const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (streaming || !hasImageFiles(e)) return
+    dragCounterRef.current += 1
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!hasImageFiles(e)) return
+    dragCounterRef.current -= 1
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0
+      setIsDragging(false)
+    }
+  }
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDragging(false)
+    if (streaming) return
+
+    const file = Array.from(e.dataTransfer.files).find((f) =>
+      ACCEPTED_IMAGE_TYPES.includes(f.type),
+    )
+    if (!file) {
+      setImageError("仅支持 JPEG、PNG、WebP 格式")
+      return
+    }
+    await processImageFile(file)
+  }
+
   const submit = () => {
     if (!canSend) return
     onSend(draft, imageBase64 || undefined)
@@ -125,28 +176,44 @@ export function ChatInput({
   }
 
   const handleSuggestionSelect = (text: string) => {
-    onDraftChange(text)
-    textareaRef.current?.focus()
+    const trimmed = text.trim()
+    if (streaming || !trimmed || trimmed.length > maxLength) return
+    onSend(trimmed)
+    onDraftChange("")
+    clearImage()
   }
 
   const showSuggestions =
     suggestions.length > 0 && !draft.trim() && !imageBase64 && !streaming
 
   return (
-    <div className="border-t bg-background p-4">
+    <div className="safe-area-bottom border-t bg-background p-2 sm:p-4">
       {showSuggestions && (
         <PromptChips
           suggestions={suggestions}
           onSelect={handleSuggestionSelect}
-          className="mx-auto mb-3 max-w-3xl"
+          className="mx-auto mb-2 max-w-3xl sm:mb-3"
         />
       )}
       <div
         className={cn(
-          "mx-auto max-w-3xl rounded-2xl border bg-card p-3 shadow-sm transition-shadow",
+          "relative mx-auto max-w-3xl rounded-2xl border bg-card p-2 shadow-sm transition-shadow sm:p-3",
           focused && "ring-2 ring-ring/20",
+          isDragging && "border-primary ring-2 ring-primary/30",
         )}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
       >
+        {isDragging && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-primary/5">
+            <p className="flex items-center gap-2 text-sm font-medium text-primary">
+              <ImagePlus className="h-4 w-4" />
+              松开以添加图片
+            </p>
+          </div>
+        )}
         {imagePreview && (
           <div className="relative mb-3 inline-block">
             <img
@@ -178,13 +245,13 @@ export function ChatInput({
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder="输入问题，或上传图片作诗… Shift+Enter 换行，Enter 发送"
+          placeholder="输入问题，或拖拽/上传图片…"
           rows={1}
-          className="min-h-[44px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+          className="min-h-[40px] resize-none border-0 bg-transparent text-base shadow-none focus-visible:ring-0 sm:min-h-[44px] sm:text-sm"
           disabled={streaming}
         />
-        <div className="mt-2 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-y-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -197,49 +264,51 @@ export function ChatInput({
               type="button"
               variant="ghost"
               size="sm"
+              className="h-9 px-2 sm:px-3"
               disabled={streaming}
               onClick={() => fileInputRef.current?.click()}
               title="上传图片作诗"
             >
-              <ImagePlus className="mr-1 h-4 w-4" />
-              图片
+              <ImagePlus className="h-4 w-4 sm:mr-1" />
+              <span className="hidden sm:inline">图片</span>
             </Button>
             {(draft || imageBase64) && !streaming && (
               <Button
                 variant="ghost"
                 size="sm"
+                className="h-9 px-2 sm:px-3"
                 onClick={() => {
                   onDraftChange("")
                   clearImage()
                 }}
               >
-                <X className="mr-1 h-3 w-3" />
-                清空
+                <X className="h-3 w-3 sm:mr-1" />
+                <span className="hidden sm:inline">清空</span>
               </Button>
             )}
             <span
               className={cn(
-                "text-xs",
+                "ml-auto text-[11px] sm:ml-0 sm:text-xs",
                 overLimit ? "text-destructive" : "text-muted-foreground",
               )}
             >
-              {draft.length} / {maxLength}
+              {draft.length}/{maxLength}
             </span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-1 sm:gap-2">
             {streaming ? (
-              <Button variant="outline" size="sm" onClick={onStop}>
-                <Square className="mr-1 h-3 w-3 fill-current" />
-                停止
+              <Button variant="outline" size="sm" className="h-9" onClick={onStop}>
+                <Square className="h-3 w-3 fill-current sm:mr-1" />
+                <span className="hidden sm:inline">停止</span>
               </Button>
             ) : (
-              <Button size="sm" disabled={!canSend} onClick={submit}>
+              <Button size="sm" className="h-9" disabled={!canSend} onClick={submit}>
                 {streaming ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin sm:mr-1" />
                 ) : (
-                  <Send className="mr-1 h-4 w-4" />
+                  <Send className="h-4 w-4 sm:mr-1" />
                 )}
-                发送
+                <span className="hidden sm:inline">发送</span>
               </Button>
             )}
           </div>

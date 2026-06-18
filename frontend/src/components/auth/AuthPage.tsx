@@ -33,8 +33,8 @@ export function AuthPage({
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm space-y-6 rounded-xl border bg-card p-8 shadow-sm">
+    <div className="flex min-h-svh items-center justify-center bg-background p-4 sm:p-6">
+      <div className="w-full max-w-sm space-y-5 rounded-xl border bg-card p-5 shadow-sm sm:space-y-6 sm:p-8">
         <div className="space-y-1 text-center">
           <h1 className="text-xl font-semibold">古典诗词鉴赏助手</h1>
           <p className="text-sm text-muted-foreground">
