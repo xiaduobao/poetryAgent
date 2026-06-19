@@ -11,9 +11,12 @@
 
 ## 功能演示
 
-<video width="100%" controls playsinline poster="docs/materials/poster.png">
-  <source src="docs/materials/poetryAgentDemo.mp4" type="video/mp4">
-</video>
+<video src="https://github.com/user-attachments/assets/33d2ec4f-bdd1-483a-a16d-7beff677d802"
+       controls width="100%" playsinline poster="docs/materials/poster.png">
+
+
+
+
 
 ## 项目简介
 
