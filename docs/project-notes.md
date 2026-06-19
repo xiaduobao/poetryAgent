@@ -783,6 +783,30 @@ python scripts/download_models.py
 
 **问**：在可观测性文档中展示 `langsmith.png` 与 `Rag.png`
 
-**答**：`docs/observability.md` 新增「截图示例」章节：第一张为 `poetry-agent-prod` Traces 列表（延迟/Token/TTFT）；第二张为单次 `chat_request` Run 树（`hybrid_retrieve` → `stream_final_answer`）。图片路径 `materials/langsmith.png`、`materials/Rag.png`。
+**标签**：`other`
+
+---
+
+## 2026-06-19 · README 演示视频内嵌播放
+
+**问**：让演示视频在 README 中直接渲染出来
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · README 架构图替换为 Mermaid
+
+**问**：架构节的 Rag.png 不对，去掉并画最新的
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · README 去掉技术亮点章节
+
+**问**：技术亮点去掉吧
+
+**答**：`README.md` 删除「技术亮点」表格及 `interview-highlights.md` 引导语；该文档仍保留在「文档导航」中。
 
 **标签**：`other`

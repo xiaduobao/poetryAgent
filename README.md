@@ -11,13 +11,9 @@
 
 ## 功能演示
 
-<table>
-  <tr>
-    <td width="60%">
-      <br><sub>▶ <a href="docs/materials/poetryAgentDemo.mp4">观看完整演示视频</a></sub>
-    </td>
-  </tr>
-</table>
+<video width="100%" controls playsinline poster="docs/materials/poster.png">
+  <source src="docs/materials/poetryAgentDemo.mp4" type="video/mp4">
+</video>
 
 ## 项目简介
 
@@ -50,16 +46,69 @@
 
 ## 架构
 
-系统由 React 前端、FastAPI 网关、LangGraph Agent、RAG 混合检索、7 类工具链与 PostgreSQL/Redis/Chroma 数据层组成。完整 Mermaid 流程图见 **[架构文档](docs/architecture.md)**。
+系统由 React 前端、FastAPI 网关、LangGraph Agent、RAG 混合检索、7 类工具链与 PostgreSQL/Redis/Chroma 数据层组成。更细的时序图与模块说明见 **[架构文档](docs/architecture.md)**。
 
-![RAG 混合检索流水线](docs/materials/Rag.png)
+```mermaid
+flowchart TB
+    subgraph Client["前端 · React 19 + Vite"]
+        UI[Chat UI / 会话管理]
+        JWT[JWT 认证]
+    end
 
-```
-用户（React + JWT）→ FastAPI SSE → LangGraph Agent
-  ├─ 意图识别（规则 + LLM 融合 + ReAct 兜底）
-  ├─ RAG 快路径 / 工具调用 / 闲聊分支
-  └─ Checkpoint 多轮记忆（Postgres → Redis → MemorySaver）
-→ LangSmith / Prometheus / Sentry 可观测
+    subgraph Gateway["FastAPI 网关"]
+        API["/auth · /sessions · /chat/stream · /rag · /tools"]
+        MW[CORS · 限流 · 安全过滤 · Metrics]
+    end
+
+    subgraph Agent["LangGraph Agent"]
+        Intent["意图识别<br/>规则 + LLM 融合 + ReAct 兜底"]
+        Intent --> Branch{路由}
+        Branch -->|rag| RAGPath[混合检索 → LLM 鉴赏]
+        Branch -->|tool_*| ToolPath[7 个 Function Tools]
+        Branch -->|chat| ChatPath[多轮闲聊]
+        CP[Checkpoint 多轮记忆]
+    end
+
+    subgraph RAG["RAG 混合检索"]
+        Vec[Chroma 向量 Top-K]
+        BM25[BM25 关键词 Top-K]
+        Rerank[BGE-Rerank 精排]
+        Vec --> Merge[合并去重] --> Rerank
+        BM25 --> Merge
+    end
+
+    subgraph Data["数据层"]
+        PG[(PostgreSQL)]
+        Redis[(Redis)]
+        Chroma[(Chroma)]
+        Corpus[语料 202 篇 + authors.json]
+    end
+
+    subgraph LLM["LLM · 通义千问"]
+        QW[qwen-plus / qwen-vl-max]
+    end
+
+    subgraph Obs["可观测性"]
+        LS[LangSmith]
+        Prom[Prometheus]
+        Sen[Sentry]
+    end
+
+    UI --> JWT --> MW --> API
+    API --> Intent
+    RAGPath --> RAG
+    RAG --> Chroma
+    RAG --> Corpus
+    ToolPath --> Corpus
+    RAGPath --> QW
+    ToolPath --> QW
+    ChatPath --> QW
+    Agent --> CP
+    CP --> PG
+    CP --> Redis
+    API --> PG
+    Agent --> Obs
+    Gateway --> Obs
 ```
 
 ## 文档导航
@@ -92,17 +141,6 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 完整步骤（模型镜像、依赖排查、Docker 全栈等）见 **[本地开发指南](docs/getting-started.md)**。
-
-## 技术亮点
-
-| 模块 | 要点 |
-|------|------|
-| **RAG** | 向量 + BM25 混合检索 → BGE-Rerank；30 条 golden set 检索通过率 100% |
-| **Agent** | LangGraph 意图路由（规则 + LLM 融合 + ReAct 兜底）；复合问题并行子任务 |
-| **工程** | JWT 配额 · SSE 流式 · Checkpoint 降级链 · LangSmith 全链路追踪 |
-| **生产** | Docker / ECS 部署，线上 [cnpoetry.top](https://cnpoetry.top/) |
-
-更详细的讲解提纲见 **[docs/interview-highlights.md](docs/interview-highlights.md)**（面向面试准备，非项目运行必需）。
 
 ## 许可证
 
