@@ -196,6 +196,19 @@ pytest tests/ -v --cov=app --cov-fail-under=40   # 与 CI 一致
 
 测试覆盖：JWT 认证、输入安全、意图规则、会话 CRUD、Chat/RAG API（Mock LLM，不消耗 API Key）。
 
+**Pre-commit（与 CI lint 一致，提交前自动检查）：**
+
+```bash
+pip install pre-commit   # 已含在 requirements.txt
+pre-commit install       # 安装 git hook（仅需一次）
+
+# 手动跑全量 lint（等同 CI 的 ruff + frontend eslint）
+pre-commit run --all-files
+```
+
+- 改动 `app/` 或 `tests/` 下 Python 文件 → `ruff check app tests`
+- 改动 `frontend/` → `cd frontend && npm run lint`
+
 ### 9. RAG 检索评估
 
 **简易关键词检查**（无需 LLM API）：

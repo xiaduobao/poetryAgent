@@ -1,8 +1,6 @@
 """输入安全过滤测试。"""
 from __future__ import annotations
 
-import pytest
-
 from app.security.filter import MAX_INPUT_LENGTH, sanitize_input, strip_user_input, wrap_user_input
 
 

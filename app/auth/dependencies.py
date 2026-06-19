@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+
 from app.auth.jwt import verify_access_token
 from app.db.database import get_session_factory
 from app.db.models import User

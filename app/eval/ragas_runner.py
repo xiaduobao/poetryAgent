@@ -90,8 +90,8 @@ def run_ragas_eval(
     from ragas.metrics import (
         AnswerRelevancy,
         ContextRecall,
-        Faithfulness,
         FactualCorrectness,
+        Faithfulness,
     )
 
     evaluation_dataset = EvaluationDataset.from_list(dataset_rows)

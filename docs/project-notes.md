@@ -635,3 +635,33 @@ python scripts/download_models.py
 验证：`cd frontend && npm run lint`
 
 **标签**：`other`
+
+---
+
+## 2026-06-19 · 修复后端 CI Ruff import 排序
+
+**问**：backend job「Ruff lint」失败，`app/agent/graph.py` I001 import 块未排序。
+
+**答**：`from app.agent.checkpoint import get_checkpointer` 误插在第三方 `langgraph` import 之间；移至本地 `app.*` import 块（`compound_pipeline` 之前）。验证：`ruff check app/agent/graph.py` 或 `ruff check --fix app/agent/graph.py`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 修复全部 backend Ruff CI 错误
+
+**问**：`ruff check app tests` 需全部通过。
+
+**答**：`ruff check --fix app tests` 自动修复 12 项（未使用 import、import 排序）；手动改 `app/tools/meter.py` 列表推导变量 `l` → `line`（E741）。验证：`ruff check app tests`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · Pre-commit 接入 CI lint
+
+**问**：将 `ruff check app tests` 与 `cd frontend && npm run lint` 放入 pre-commit 验证。
+
+**答**：新增 `.pre-commit-config.yaml`（local hooks）；`requirements.txt` 增加 `pre-commit`。安装：`pip install pre-commit && pre-commit install`；全量：`pre-commit run --all-files`。
+
+**标签**：`other`

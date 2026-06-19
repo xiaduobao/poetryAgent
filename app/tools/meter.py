@@ -2,7 +2,6 @@
 import re
 from typing import Any
 
-
 # 简化平仄表（演示用，非完整韵书）
 PINGZE_HINT = {
     "床": "平", "前": "平", "明": "平", "月": "仄", "光": "平",
@@ -19,7 +18,9 @@ def _extract_lines_from_title_or_text(title: str, text: str = "") -> list[str]:
             for ln in text.splitlines()
             if ln.strip() and not ln.startswith("#") and "：" not in ln[:3]
         ]
-        verse = [l for l in lines if re.search(r"[\u4e00-\u9fff]，", l) or len(l) <= 12]
+        verse = [
+            line for line in lines if re.search(r"[\u4e00-\u9fff]，", line) or len(line) <= 12
+        ]
         if verse:
             return verse[:4]
     return []

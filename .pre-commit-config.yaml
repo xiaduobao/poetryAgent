@@ -1,0 +1,21 @@
+# Git pre-commit：与 CI 一致的 lint 检查
+# 安装：pip install pre-commit && pre-commit install
+# 手动全量：pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check app tests
+        entry: ruff check app tests
+        language: system
+        types: [python]
+        files: ^(app|tests)/
+        pass_filenames: false
+
+      - id: frontend-eslint
+        name: frontend eslint
+        entry: bash -c 'cd frontend && npm run lint'
+        language: system
+        files: ^frontend/
+        pass_filenames: false

@@ -31,7 +31,6 @@ from app.auth.dependencies import get_current_user
 from app.auth.quota import require_chat_quota, require_rag_quota
 from app.config import get_settings
 from app.db import crud
-from app.db.audit import log_audit
 from app.db.database import get_db, get_session_factory
 from app.db.models import User
 from app.observability.health import readiness_report

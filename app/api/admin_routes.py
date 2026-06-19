@@ -10,7 +10,7 @@ from app.auth.dependencies import get_current_admin
 from app.db import crud
 from app.db.audit import log_audit
 from app.db.database import get_db
-from app.db.models import AuditLog, Subscription, UsageRecord, User
+from app.db.models import AuditLog, UsageRecord, User
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

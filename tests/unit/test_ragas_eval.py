@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def test_build_evaluation_dataset_with_mock_retriever():
     from langchain_core.documents import Document
