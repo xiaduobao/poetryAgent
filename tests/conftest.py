@@ -8,12 +8,14 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.config import get_settings
+from app.db.database import init_db
 
 
 @pytest.fixture
 async def client(tmp_path, monkeypatch) -> AsyncIterator[AsyncClient]:
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("SESSIONS_DB", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.setenv("JWT_SECRET_KEY", "ci-test-secret-key-for-pytest")
     monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-placeholder")
@@ -31,7 +33,8 @@ async def client(tmp_path, monkeypatch) -> AsyncIterator[AsyncClient]:
         from app.main import create_app
 
         app = create_app()
-        transport = ASGITransport(app=app, lifespan="on")
+        await init_db()
+        transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
 

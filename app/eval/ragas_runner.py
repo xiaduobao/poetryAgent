@@ -124,12 +124,58 @@ def run_ragas_eval(
 
 
 def result_to_dict(result: Any) -> dict[str, float]:
-    """将 Ragas EvaluationResult 转为可序列化字典。"""
+    """将 Ragas EvaluationResult 转为可序列化字典（仅数值列，忽略 NaN）。"""
     if hasattr(result, "scores"):
         raw = result.scores
         if isinstance(raw, dict):
-            return {k: round(float(v), 4) for k, v in raw.items()}
+            out: dict[str, float] = {}
+            for k, v in raw.items():
+                try:
+                    fv = float(v)
+                    if fv == fv:  # not NaN
+                        out[k] = round(fv, 4)
+                except (TypeError, ValueError):
+                    continue
+            if out:
+                return out
     if hasattr(result, "to_pandas"):
+        import pandas as pd
+
         df = result.to_pandas()
-        return {col: round(float(df[col].mean()), 4) for col in df.columns}
+        out = {}
+        for col in df.columns:
+            series = pd.to_numeric(df[col], errors="coerce")
+            mean = series.mean(skipna=True)
+            if pd.notna(mean):
+                out[col] = round(float(mean), 4)
+        return out
     return dict(result)
+
+
+def result_to_rows(result: Any) -> list[dict[str, Any]]:
+    """逐条用例分数（用于报告详情）。"""
+    if not hasattr(result, "to_pandas"):
+        return []
+    import pandas as pd
+
+    df = result.to_pandas()
+    rows: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        item: dict[str, Any] = {}
+        for col in df.columns:
+            val = row[col]
+            if isinstance(val, (list, tuple)):
+                continue
+            try:
+                if pd.isna(val):
+                    continue
+            except (ValueError, TypeError):
+                pass
+            try:
+                item[col] = round(float(val), 4)
+            except (TypeError, ValueError):
+                if val is not None and str(val).strip():
+                    item[col] = str(val)
+        if item:
+            rows.append(item)
+    return rows

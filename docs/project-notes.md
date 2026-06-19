@@ -727,3 +727,62 @@ python scripts/download_models.py
 **答**：副标题改为「已上线运行的 RAG + LangGraph Agent 全栈应用」；Badge Demo→Live；项目简介强调生产部署与 202 篇语料；许可证去掉「学习用途」；docs 中「在线 Demo」统一为「线上站点」。
 
 **标签**：`other`
+
+---
+
+## 2026-06-19 · README 演示视频 16MB 无法在首页内嵌播放
+
+**问**：上传的演示视频约 16MB，在 README 首页展示不出来怎么办？
+
+**答**：
+1. **根因**：GitHub README 的 `<video>` 只认 `github.com/user-attachments/assets/...`、`user-images.githubusercontent.com` 或 `releases/download/...` 等绝对 URL；**仓库内相对路径**（如 `docs/materials/poetryAgentDemo.mp4`）不会内嵌播放器。当前 README 用的是缩略图 `Rag.png` + 文字链，首页看到的是图而非自动播放视频。
+2. **10MB 限制**：在 GitHub 网页编辑器里拖拽上传 MP4 到 README，免费账号单文件上限约 **10MB**；16MB 会失败，需先压缩。
+3. **推荐做法（内嵌播放）**：
+   - 压缩：`ffmpeg -i poetryAgentDemo.mp4 -vcodec libx264 -crf 28 -preset slow -an demo-readme.mp4`（目标 <10MB）
+   - 在 GitHub 打开 README 编辑，把压缩后的 mp4 **拖进编辑器**，得到 `user-attachments` URL
+   - README 写入：`<video src="https://github.com/user-attachments/assets/xxx" controls width="100%" playsinline></video>`
+4. **备选**：GitHub Release 挂大文件 + `releases/download/...` URL；或外链 B 站/YouTube；或短片段转 GIF 用 `<img>`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · Ragas 评估报告（Context Recall 0.68）
+
+**问**：添加 Ragas 报告。
+
+**答**：30 条 golden set + `--retrieval-only --llm-model qwen-turbo` → `reports/ragas.json`，**context_recall = 0.6782**。修复 `result_to_dict` 处理失败用例；脚本新增 `--limit`、`--llm-model`。qwen-plus 免费额度耗尽时需换 turbo。
+
+复现：`python scripts/eval_rag_ragas.py --retrieval-only --llm-model qwen-turbo --output reports/ragas.json`
+
+**标签**：`rag`
+
+---
+
+## 2026-06-19 · 不同工具能否用不同 RAG 数量加速
+
+**问**：不同的工具调用查询 RAG 是不是可以设不同数量，让返回更快？
+
+**答**：**返回条数可以不同，但当前实现不会因此更快**。`allusion` 取 `[:3]`、`theme` 取 `[:6]`、`/api/v1/rag` 用 `top_k`（默认 4）、`poetry_search` 走完整 `retrieve()`（最终 `rerank_top_n=4`）——这些差异只影响**最终给 LLM 的文档数**，底层每次都跑同一套：向量 k=8 + BM25 k=8 + Rerank 最多 6 条候选。
+
+要真正加速，需让 `HybridRetriever.retrieve()` 支持按场景传入 `retrieval_k` / `rerank_n` / `skip_rerank`（轻量工具如典故可 k=4、rerank_n=2 或跳过 rerank；鉴赏类保持 k=8、rerank_n=4）。多数工具（`author_query`、`poem_lookup`、`meter_analysis` 等）不走 RAG，只用 JSON 语料。
+
+**标签**：`rag`
+
+---
+
+## 2026-06-19 · 修复 pytest 单元测试失败
+
+**问**：fix the unitest error
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 可观测性文档展示 LangSmith 截图
+
+**问**：在可观测性文档中展示 `langsmith.png` 与 `Rag.png`
+
+**答**：`docs/observability.md` 新增「截图示例」章节：第一张为 `poetry-agent-prod` Traces 列表（延迟/Token/TTFT）；第二张为单次 `chat_request` Run 树（`hybrid_retrieve` → `stream_final_answer`）。图片路径 `materials/langsmith.png`、`materials/Rag.png`。
+
+**标签**：`other`

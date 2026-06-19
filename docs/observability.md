@@ -2,9 +2,21 @@
 
 > 返回 [文档首页](README.md)
 
-![LangSmith Agent 全链路追踪](materials/langsmith.png)
-
 项目已集成 [LangSmith](https://smith.langchain.com/)，用于追踪 Agent 全链路：API 根 Run → 意图识别 → RAG/工具 → LLM 流式生成。
+
+## 截图示例
+
+### Traces 列表（`poetry-agent-prod`）
+
+生产环境 Project 的 Traces 视图，可按会话 `session_id` 过滤，查看每次 `chat_request` 的延迟、Token 用量与首 Token 时间（TTFT）。
+
+![LangSmith Traces 列表](materials/langsmith.png)
+
+### 单次请求 Run 树（RAG + 流式生成）
+
+展开某次 `chat_request` 可看到完整调用链：`prepare_agent` → `classify_intent` → `retrieve_rag`（`hybrid_retrieve` 含向量 / BM25 / Rerank）→ `stream_final_answer`（`qwen-plus`）。右侧 Input/Output 面板可核对用户问题、检索上下文与流式输出。
+
+![LangSmith RAG 调用链详情](materials/Rag.png)
 
 ## 启用方式
 

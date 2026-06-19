@@ -14,14 +14,7 @@
 <table>
   <tr>
     <td width="60%">
-      <a href="docs/materials/poetryAgentDemo.mp4">
-        <img src="docs/materials/Rag.png" alt="RAG 检索与对话演示" width="100%">
-      </a>
       <br><sub>▶ <a href="docs/materials/poetryAgentDemo.mp4">观看完整演示视频</a></sub>
-    </td>
-    <td width="40%">
-      <img src="docs/materials/langsmith.png" alt="LangSmith Agent 全链路追踪" width="100%">
-      <br><sub>LangSmith Run 树 · 意图 → RAG/工具 → 流式生成</sub>
     </td>
   </tr>
 </table>
@@ -42,12 +35,16 @@
 
 ### RAG 检索评估（2026-06-19）
 
-| 指标 | 数值 |
-|------|------|
-| Golden set | 30 条（单篇 20 + 主题 10） |
-| 检索通过率 | **100%**（30/30） |
-| 平均召回 | **3.33** 篇/查询 |
-| 语料规模 | 202 篇 |
+| 指标 | 离线 smoke | Ragas（LLM 评判） |
+|------|------------|-------------------|
+| Golden set | 30 条 | 30 条 |
+| 检索通过率 | **100%**（30/30） | — |
+| 平均召回 | **3.33** 篇/查询 | — |
+| Context Recall | — | **0.68** |
+| 语料规模 | 202 篇 | 202 篇 |
+
+- 离线报告：[reports/rag_eval.json](reports/rag_eval.json)
+- Ragas 报告：[reports/ragas.json](reports/ragas.json)（`context_recall`，评判模型 `qwen-turbo`）
 
 详见 [测试与 RAG 评估](docs/testing-and-evaluation.md)。
 

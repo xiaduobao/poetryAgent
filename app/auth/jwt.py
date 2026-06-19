@@ -1,6 +1,7 @@
 """JWT 签发与校验。"""
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -39,7 +40,7 @@ def create_guest_access_token(subject: str, extra: dict[str, Any] | None = None)
 def create_refresh_token(subject: str) -> tuple[str, datetime]:
     settings = get_settings()
     expire = _utcnow() + timedelta(days=settings.jwt_refresh_expire_days)
-    payload = {"sub": subject, "type": "refresh", "exp": expire}
+    payload = {"sub": subject, "type": "refresh", "exp": expire, "jti": str(uuid.uuid4())}
     token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     return token, expire
 
