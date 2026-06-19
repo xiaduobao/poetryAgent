@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     openai_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_model: str = "qwen-plus"
     vision_model: str = "qwen-vl-max"
+    # ReAct 工具多轮 / 低置信兜底专用；留空则与 LLM_MODEL 相同
+    react_llm_model: str = "qwen-turbo"
     # qwen3.7-plus 等混合思考模型默认开启思考，Agent 多轮调用会显著变慢；一般对话建议 false
     llm_enable_thinking: bool = False
 

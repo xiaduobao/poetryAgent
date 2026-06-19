@@ -12,7 +12,7 @@ from app.agent.context_resolver import (
     format_poem_context_hint,
     resolve_poem_context,
 )
-from app.agent.llm import get_llm
+from app.agent.llm import get_react_llm
 from app.agent.prompts import REACT_AGENT_PROMPT, SYSTEM_PROMPT
 from app.agent.route_log import log_route
 from app.agent.tools import AGENT_TOOLS
@@ -248,7 +248,7 @@ def run_limited_react(
         rag_budget=_RagBudget(settings.react_rag_max_searches),
     )
     tool_map = {t.name: t for t in tools}
-    llm = get_llm().bind_tools(tools)
+    llm = get_react_llm().bind_tools(tools)
 
     hint = intent_hint or REACT_AGENT_PROMPT
     ctx_hint = format_poem_context_hint(poem_ctx)

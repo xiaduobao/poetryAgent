@@ -128,7 +128,7 @@ def test_run_limited_react_multi_round(monkeypatch):
     mock_llm = MagicMock()
     mock_llm.bind_tools.return_value.invoke = fake_invoke
 
-    with patch("app.agent.react_loop.get_llm", return_value=mock_llm), patch(
+    with patch("app.agent.react_loop.get_react_llm", return_value=mock_llm), patch(
         "app.agent.react_loop._execute_tool_calls",
         side_effect=[
             [ToolMessage(content='{"data": {"title": "静夜思"}}', tool_call_id="tc1")],

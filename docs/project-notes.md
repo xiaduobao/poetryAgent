@@ -879,6 +879,17 @@ python scripts/download_models.py
 5. **复合问题**（`COMPOUND_INTENT_ENABLED=true`）：拆解后子任务 `intent=rag` 的走 `_retrieve_for_query`，再合成回答。
 6. **间接 RAG**（非 `mode=rag`）：`REACT_RAG_AS_TOOL_ENABLED=true` 时，ReAct 提供 `poetry_search` 工具——低置信兜底（非 rule 来源且 confidence<0.65）、工具 ReAct 多轮、或 `tool_allusion` 需背景时可能调用。
 
-**不走 RAG**：`chat` 闲聊；`tool_*` 高置信 legacy 单轮（查原文/作者/格律等）；rule 来源不会因低置信改走 ReAct。
-
 **标签**：`rag`
+
+---
+
+## 2026-06-19 · ReAct 使用独立小模型
+
+**问**：ReAct 换一个另外的小型、响应快的模型。
+
+**答**：
+1. 新增配置 `REACT_LLM_MODEL`（默认 `qwen-turbo`），仅 ReAct 工具多轮 / 低置信兜底使用；最终回答仍用 `LLM_MODEL`（如 `qwen-plus`）。
+2. 代码：`get_react_llm()`（`app/agent/llm.py`），`react_loop.py` 已切换；留空 `REACT_LLM_MODEL` 则沿用主模型。
+3. 本地/生产在 `.env` / `.env.prod` 增加：`REACT_LLM_MODEL=qwen-turbo`（或 `qwen-flash` 更快、略弱）。
+
+**标签**：`config`
