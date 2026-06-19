@@ -810,3 +810,21 @@ python scripts/download_models.py
 **答**：`README.md` 删除「技术亮点」表格及 `interview-highlights.md` 引导语；该文档仍保留在「文档导航」中。
 
 **标签**：`other`
+
+---
+
+## 2026-06-19 · 页面慢因 Google Fonts 外链
+
+**问**：浏览器访问 cnpoetry.top 很慢，为什么会请求 `fonts.googleapis.com`？
+
+**标签**：`config`
+
+---
+
+## 2026-06-19 · 移除 Google Fonts 外链
+
+**问**：采用最快方案，删掉 Google Fonts，用系统回退字体。
+
+**答**：删除 `frontend/index.html` 中 `fonts.googleapis.com` / `fonts.gstatic.com` 三行 `<link>`。诗卡仍用 `font-family: "Noto Serif SC", "Songti SC", "STSong", serif`，无外链时自动落到宋体。国内首屏不再请求 Google CDN。
+
+**标签**：`config`
