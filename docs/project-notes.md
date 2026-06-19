@@ -730,18 +730,15 @@ python scripts/download_models.py
 
 ---
 
-## 2026-06-19 · README 演示视频 16MB 无法在首页内嵌播放
+## 2026-06-19 · README 演示视频无法在首页内嵌播放
 
-**问**：上传的演示视频约 16MB，在 README 首页展示不出来怎么办？
+**问**：演示视频在 README 首页展示不出来怎么办？
 
 **答**：
-1. **根因**：GitHub README 的 `<video>` 只认 `github.com/user-attachments/assets/...`、`user-images.githubusercontent.com` 或 `releases/download/...` 等绝对 URL；**仓库内相对路径**（如 `docs/materials/poetryAgentDemo.mp4`）不会内嵌播放器。当前 README 用的是缩略图 `Rag.png` + 文字链，首页看到的是图而非自动播放视频。
-2. **10MB 限制**：在 GitHub 网页编辑器里拖拽上传 MP4 到 README，免费账号单文件上限约 **10MB**；16MB 会失败，需先压缩。
-3. **推荐做法（内嵌播放）**：
-   - 压缩：`ffmpeg -i poetryAgentDemo.mp4 -vcodec libx264 -crf 28 -preset slow -an demo-readme.mp4`（目标 <10MB）
-   - 在 GitHub 打开 README 编辑，把压缩后的 mp4 **拖进编辑器**，得到 `user-attachments` URL
-   - README 写入：`<video src="https://github.com/user-attachments/assets/xxx" controls width="100%" playsinline></video>`
-4. **备选**：GitHub Release 挂大文件 + `releases/download/...` URL；或外链 B 站/YouTube；或短片段转 GIF 用 `<img>`。
+1. **根因（与体积无关）**：GitHub README 的 `<video>` **不支持**仓库内相对路径或 `raw.githubusercontent.com`；只认 `user-attachments`、`user-images.githubusercontent.com` 或 `releases/download/...` 等绝对 URL。当前 `docs/materials/poetryAgentDemo.mp4` 约 **3.2MB**，远低于 10MB 上限，**无需压缩**。
+2. **当前方案（封面 + 点击播放）**：`[![...](docs/materials/poster.png)](.../blob/main/docs/materials/poetryAgentDemo.mp4)`，首页显示 poster，点击用 GitHub 内置播放器播放。
+3. **若要在 README 内嵌播放器**：GitHub 网页打开 README 编辑 → 把 `poetryAgentDemo.mp4` **拖进编辑器** → 复制生成的 `user-attachments` URL → 写入 `<video src="https://github.com/user-attachments/assets/xxx" controls width="100%" playsinline poster="docs/materials/poster.png"></video>`。
+4. **备选**：GitHub Release 挂 mp4 + `releases/download/...` URL。
 
 **标签**：`other`
 
@@ -828,3 +825,17 @@ python scripts/download_models.py
 **答**：删除 `frontend/index.html` 中 `fonts.googleapis.com` / `fonts.gstatic.com` 三行 `<link>`。诗卡仍用 `font-family: "Noto Serif SC", "Songti SC", "STSong", serif`，无外链时自动落到宋体。国内首屏不再请求 Google CDN。
 
 **标签**：`config`
+
+---
+
+## 2026-06-19 · README「功能演示」区块空白
+
+**问**：GitHub README 的「功能演示」没有内容，只显示空白/破损图标。
+
+**答**：
+1. **根因**：GitHub README 的 `<video>` 不支持仓库内相对路径（`docs/materials/poetryAgentDemo.mp4`），只认 `user-attachments`、`user-images.githubusercontent.com` 或 `releases/download` 等绝对 URL。
+2. **修复**：改为封面图 + 链接——`[![...](docs/materials/poster.png)](https://github.com/xiaduobao/poetryAgent/blob/main/docs/materials/poetryAgentDemo.mp4)`，首页可见 poster，点击跳转播放。
+3. **若需内嵌播放器**：当前 mp4 约 3.2MB，直接在 GitHub README 编辑器拖拽上传，用返回的 `user-attachments` URL 写 `<video src="..." controls>` 即可（无需压缩）。
+4. **已落地**：上传后 URL 为 `https://github.com/user-attachments/assets/33d2ec4f-bdd1-483a-a16d-7beff677d802`，README 已改为内嵌 `<video>` + `poster.png`。
+
+**标签**：`other`

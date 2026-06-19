@@ -11,12 +11,9 @@
 
 ## 功能演示
 
-<video src="https://github.com/user-attachments/assets/33d2ec4f-bdd1-483a-a16d-7beff677d802"
-       controls width="100%" playsinline poster="docs/materials/poster.png">
-
-
-
-
+<video src="https://github.com/user-attachments/assets/33d2ec4f-bdd1-483a-a16d-7beff677d802" controls width="100%" playsinline poster="docs/materials/poster.png">
+  <a href="https://github.com/user-attachments/assets/33d2ec4f-bdd1-483a-a16d-7beff677d802">下载演示视频</a>
+</video>
 
 ## 项目简介
 
@@ -53,26 +50,26 @@
 
 ```mermaid
 flowchart TB
-    subgraph Client["前端 · React 19 + Vite"]
+    subgraph Client["前端 - React 19 + Vite"]
         UI[Chat UI / 会话管理]
         JWT[JWT 认证]
     end
 
     subgraph Gateway["FastAPI 网关"]
-        API["/auth · /sessions · /chat/stream · /rag · /tools"]
-        MW[CORS · 限流 · 安全过滤 · Metrics]
+        API["auth, sessions, chat/stream, rag, tools"]
+        MW[CORS, 限流, 安全过滤, Metrics]
     end
 
     subgraph Agent["LangGraph Agent"]
-        Intent["意图识别<br/>规则 + LLM 融合 + ReAct 兜底"]
+        Intent["意图识别 - 规则 + LLM 融合 + ReAct 兜底"]
         Intent --> Branch{路由}
-        Branch -->|rag| RAGPath[混合检索 → LLM 鉴赏]
-        Branch -->|tool_*| ToolPath[7 个 Function Tools]
+        Branch -->|rag| RAGPath[混合检索到 LLM 鉴赏]
+        Branch -->|tool| ToolPath[7 个 Function Tools]
         Branch -->|chat| ChatPath[多轮闲聊]
         CP[Checkpoint 多轮记忆]
     end
 
-    subgraph RAG["RAG 混合检索"]
+    subgraph RAGBlock["RAG 混合检索"]
         Vec[Chroma 向量 Top-K]
         BM25[BM25 关键词 Top-K]
         Rerank[BGE-Rerank 精排]
@@ -87,7 +84,7 @@ flowchart TB
         Corpus[语料 202 篇 + authors.json]
     end
 
-    subgraph LLM["LLM · 通义千问"]
+    subgraph LLMBlock["LLM - 通义千问"]
         QW[qwen-plus / qwen-vl-max]
     end
 
@@ -99,19 +96,18 @@ flowchart TB
 
     UI --> JWT --> MW --> API
     API --> Intent
-    RAGPath --> RAG
-    RAG --> Chroma
-    RAG --> Corpus
+    RAGPath --> Vec
+    Vec --> Chroma
+    Vec --> Corpus
     ToolPath --> Corpus
     RAGPath --> QW
     ToolPath --> QW
     ChatPath --> QW
-    Agent --> CP
     CP --> PG
     CP --> Redis
     API --> PG
-    Agent --> Obs
-    Gateway --> Obs
+    Intent --> LS
+    MW --> Prom
 ```
 
 ## 文档导航
