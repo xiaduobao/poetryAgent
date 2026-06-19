@@ -836,6 +836,18 @@ python scripts/download_models.py
 1. **根因**：GitHub README 的 `<video>` 不支持仓库内相对路径（`docs/materials/poetryAgentDemo.mp4`），只认 `user-attachments`、`user-images.githubusercontent.com` 或 `releases/download` 等绝对 URL。
 2. **修复**：改为封面图 + 链接——`[![...](docs/materials/poster.png)](https://github.com/xiaduobao/poetryAgent/blob/main/docs/materials/poetryAgentDemo.mp4)`，首页可见 poster，点击跳转播放。
 3. **若需内嵌播放器**：当前 mp4 约 3.2MB，直接在 GitHub README 编辑器拖拽上传，用返回的 `user-attachments` URL 写 `<video src="..." controls>` 即可（无需压缩）。
-4. **已落地**：上传后 URL 为 `https://github.com/user-attachments/assets/33d2ec4f-bdd1-483a-a16d-7beff677d802`，README 已改为内嵌 `<video>` + `poster.png`。
-
 **标签**：`other`
+
+---
+
+## 2026-06-19 · qwen3.7-plus 比 qwen-plus 慢很多
+
+**问**：从 `qwen-plus` 换到 `qwen3.7-plus` 后接口慢很多（LangSmith 显示 `stream_final_answer` ~55s）。
+
+**答**：
+1. **根因**：`qwen3.7-plus` 是**混合思考模型，默认开启思考模式**（`enable_thinking=true`）。Agent 一次请求会多次调 LLM（`decompose_query` ~8s + `prepare_tool_call` ~3s + `stream_final_answer` ~55s），每轮都先「深度推理」再输出，体感比 `qwen-plus` 慢数倍。
+2. **修复**：`.env` / `.env.prod` 设 `LLM_ENABLE_THINKING=false`；代码 `get_llm()` 对 `qwen3*` 模型经 `extra_body` 传 `enable_thinking: false`。
+3. **部署**：改 env 后重启服务（`docker compose ... up -d` 或 reload）。
+4. **可选**：简单问答不需要复合拆解时可关 `COMPOUND_INTENT_ENABLED=false`，少一次 `decompose_query` 调用；复杂推理场景再开 `LLM_ENABLE_THINKING=true`。
+
+**标签**：`config`

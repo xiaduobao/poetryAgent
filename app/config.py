@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     openai_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_model: str = "qwen-plus"
     vision_model: str = "qwen-vl-max"
+    # qwen3.7-plus 等混合思考模型默认开启思考，Agent 多轮调用会显著变慢；一般对话建议 false
+    llm_enable_thinking: bool = False
 
     embedding_model: str = "./data/models/bge-small-zh-v1.5"
     rerank_model: str = "./data/models/BAAI--bge-reranker-base"
