@@ -1,0 +1,14 @@
+{
+  "golden_set": "tests/eval/rag_golden_set.json",
+  "evaluated_at": "2026-06-19",
+  "corpus_size": 202,
+  "total_cases": 30,
+  "passed": 30,
+  "pass_rate": 1.0,
+  "avg_doc_count": 3.33,
+  "metrics_note": "离线检索 smoke test：min_docs 达标 + expect_keywords 命中；不消耗 LLM API",
+  "case_breakdown": {
+    "single_poem": 20,
+    "thematic": 10
+  }
+}

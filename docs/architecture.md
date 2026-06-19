@@ -1,6 +1,7 @@
 # poetryAgent 架构与流程图
 
-> 古典诗词鉴赏智能助手 · React 前端 + FastAPI 后端 + LangGraph Agent + RAG + 工具链
+> 古典诗词鉴赏智能助手 · React 前端 + FastAPI 后端 + LangGraph Agent + RAG + 工具链  
+> 线上站点：[https://cnpoetry.top/](https://cnpoetry.top/) · 返回 [文档首页](README.md)
 
 ---
 

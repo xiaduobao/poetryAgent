@@ -665,3 +665,65 @@ python scripts/download_models.py
 **答**：新增 `.pre-commit-config.yaml`（local hooks）；`requirements.txt` 增加 `pre-commit`。安装：`pip install pre-commit && pre-commit install`；全量：`pre-commit run --all-files`。
 
 **标签**：`other`
+
+---
+
+## 2026-06-19 · 修复 CI Pytest ModuleNotFoundError
+
+**问**：CI Pytest 失败，`tests/conftest.py` 报 `ModuleNotFoundError: No module named 'app'`。
+
+**答**：`pyproject.toml` 的 `[tool.pytest.ini_options]` 增加 `pythonpath = ["."]`，让 pytest 从项目根目录解析 `app` 包（与本地 `uvicorn`/开发一致）。验证：`pytest tests/ -v --cov=app --cov-fail-under=40`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 简历呈现建议与待优化项
+
+**问**：项目写进简历的建议，以及当前还有哪些点需要优化。
+
+**答**：
+- **简历写法**：项目名 + 一句话定位（古典诗词 RAG + LangGraph Agent 全栈）；3～5 条 STAR  bullet，突出混合检索、意图路由、SSE 流式、JWT 配额、ECS 部署；技术栈按 JD 裁剪（AI 岗强调 RAG/Agent，后端岗强调 FastAPI/Postgres/CI）。
+- **面试可讲**：分块策略、混合检索+Rerank、规则+LLM 意图融合+ReAct 兜底、复合问题并行子任务、LangSmith 可观测、看图作诗多模态链路。
+- **高优先级优化**：① README 顶部加在线 Demo 链接 + 架构/GIF；② 跑 Ragas 并把指标写入 README（golden set 仅 3 条需扩到 20+）；③ 覆盖率从 40% 提到 60%+，补 Agent graph 集成测；④ CI 加 `eval_rag.py` 离线检索 smoke；⑤ 前端补 Vitest 或 Playwright。
+- **中优先级**：HTTPS 域名、CI/coverage badge、docs/case-study.md 一页案例、量化 TTFT/规则命中率。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · Golden set 扩至 30 条并写入 RAG 评估指标
+
+**问**：执行 Day 3-4：golden set 扩到 30 条，跑 eval，把指标写进 README。
+
+**答**：
+1. `tests/eval/rag_golden_set.json` 扩至 **30 条**（单篇赏析 20 + 主题/体裁 10）。
+2. 运行 `python scripts/eval_rag.py`：**30/30 通过**，平均召回 **3.33 篇/查询**（202 篇语料向量库）。
+3. `scripts/eval_rag.py` 新增 `--output reports/rag_eval.json`；README §9 增加「当前评估结果」表格。
+4. 全链路 Ragas 需 API Key：`python scripts/eval_rag_ragas.py --output reports/ragas.json`
+
+**标签**：`rag`
+
+---
+
+## 2026-06-19 · README 重构：Demo 链接 + 文档体系
+
+**问**：Day 1-2：ECS Demo 链接、架构图、演示素材写入 README；将 README 内容抽取到 docs 并给出用户指引。
+
+**答**：
+1. README 顶部加入 **[cnpoetry.top](https://cnpoetry.top/)** Demo 徽章、演示视频/截图（`docs/materials/`）。
+2. 架构简图 + 链接 `docs/architecture.md`；RAG 截图 `materials/Rag.png`。
+3. 详细内容拆至 docs：`README.md`（文档首页）、`getting-started.md`、`deployment.md`、`testing-and-evaluation.md`、`observability.md`、`api-examples.md`、`corpus-management.md`。
+4. 根 README 精简为入口 + 文档导航 + 快速开始命令。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · README 定位优化：弱化「学习项目」表述
+
+**问**：曾建议不要强调学习项目，优化 README 定位。
+
+**答**：副标题改为「已上线运行的 RAG + LangGraph Agent 全栈应用」；Badge Demo→Live；项目简介强调生产部署与 202 篇语料；许可证去掉「学习用途」；docs 中「在线 Demo」统一为「线上站点」。
+
+**标签**：`other`
