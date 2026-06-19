@@ -8,7 +8,7 @@ from httpx import AsyncClient
 @pytest.mark.asyncio
 async def test_session_crud(client: AsyncClient, auth_headers: dict[str, str]):
     create = await client.post("/api/v1/sessions", headers=auth_headers, json={"title": "测试会话"})
-    assert create.status_code == 200
+    assert create.status_code == 201
     session = create.json()
     session_id = session["id"]
     assert session["title"] == "测试会话"

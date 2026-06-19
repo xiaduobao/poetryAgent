@@ -851,3 +851,34 @@ python scripts/download_models.py
 4. **可选**：简单问答不需要复合拆解时可关 `COMPOUND_INTENT_ENABLED=false`，少一次 `decompose_query` 调用；复杂推理场景再开 `LLM_ENABLE_THINKING=true`。
 
 **标签**：`config`
+
+---
+
+## 2026-06-19 · CI 四处测试失败修复
+
+**问**：GitHub Actions 失败：`intent_golden_set.json` 找不到、会话创建期望 200 实际 201、`ragas` 未安装导致 mock 失败。
+
+**答**：
+1. **Golden set 路径**：`app/eval/intent_eval.py` 的 `GOLDEN_PATH` 改为 `tests/eval/intent_golden_set.json`（原误指向 `app/eval/`）。
+2. **会话 API**：`POST /api/v1/sessions` 路由声明 `status_code=201`，测试改为 `assert create.status_code == 201`。
+3. **Ragas mock**：CI 只装 `requirements.txt` 不含 `ragas`；`test_run_ragas_eval_calls_evaluate` 改用 `patch.dict(sys.modules, {...})` 注入假 `ragas` 模块，避免 `patch("ragas.evaluate")` 触发真实 import。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 什么时候会走 RAG 链路
+
+**问**：当前什么时候会走 RAG 链路？
+
+**答**：
+1. **独立检索 API**：`POST /api/v1/rag` 始终走混合检索（向量+关键词+Rerank），只返回文档，不生成回答。
+2. **对话主链路**（`/chat`、`/chat/stream` → `prepare_agent`）：意图为 `rag` 且未触发低置信 ReAct 兜底时，走 `retrieve_rag` → `RAG_PROMPT` 生成（`mode=rag`）。
+3. **规则命中 `rag`**：`appreciation`（赏析/鉴赏/欣赏/主旨，或「含义+《》」）；`poem_title`（含《诗名》或名篇如「登高」，且非查原文/格律）。
+4. **LLM 兜底**：规则未命中时，LLM 分类为「诗词鉴赏、赏析、意境/主旨分析」→ `rag`。
+5. **复合问题**（`COMPOUND_INTENT_ENABLED=true`）：拆解后子任务 `intent=rag` 的走 `_retrieve_for_query`，再合成回答。
+6. **间接 RAG**（非 `mode=rag`）：`REACT_RAG_AS_TOOL_ENABLED=true` 时，ReAct 提供 `poetry_search` 工具——低置信兜底（非 rule 来源且 confidence<0.65）、工具 ReAct 多轮、或 `tool_allusion` 需背景时可能调用。
+
+**不走 RAG**：`chat` 闲聊；`tool_*` 高置信 legacy 单轮（查原文/作者/格律等）；rule 来源不会因低置信改走 ReAct。
+
+**标签**：`rag`

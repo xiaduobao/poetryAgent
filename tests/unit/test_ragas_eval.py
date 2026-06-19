@@ -1,6 +1,7 @@
 """Ragas 评估模块测试（Mock，不调用 LLM API）。"""
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
 
@@ -52,16 +53,30 @@ def test_run_ragas_eval_calls_evaluate():
     mock_result.scores = {"faithfulness": 0.9}
     mock_llm = MagicMock()
     mock_embeddings = MagicMock()
+    mock_evaluate = MagicMock(return_value=mock_result)
+
+    mock_ragas = MagicMock()
+    mock_ragas.EvaluationDataset.from_list.return_value = MagicMock()
+    mock_ragas.evaluate = mock_evaluate
+    mock_ragas.llms.LangchainLLMWrapper.return_value = mock_llm
+    mock_ragas.embeddings.LangchainEmbeddingsWrapper.return_value = mock_embeddings
+    mock_ragas.metrics.Faithfulness.return_value = MagicMock()
+    mock_ragas.metrics.AnswerRelevancy.return_value = MagicMock()
+    mock_ragas.metrics.ContextRecall.return_value = MagicMock()
+    mock_ragas.metrics.FactualCorrectness.return_value = MagicMock()
+
+    ragas_modules = {
+        "ragas": mock_ragas,
+        "ragas.embeddings": mock_ragas.embeddings,
+        "ragas.llms": mock_ragas.llms,
+        "ragas.metrics": mock_ragas.metrics,
+    }
 
     with (
         patch("app.eval.ragas_runner.get_llm", return_value=mock_llm),
         patch("app.eval.ragas_runner.get_embeddings", return_value=mock_embeddings),
-        patch("ragas.evaluate") as mock_evaluate,
-        patch("ragas.EvaluationDataset.from_list", return_value=MagicMock()),
-        patch("ragas.llms.LangchainLLMWrapper", return_value=mock_llm),
-        patch("ragas.embeddings.LangchainEmbeddingsWrapper", return_value=mock_embeddings),
+        patch.dict(sys.modules, ragas_modules),
     ):
-        mock_evaluate.return_value = mock_result
         result = run_ragas_eval(rows, retrieval_only=False)
 
     assert result is mock_result

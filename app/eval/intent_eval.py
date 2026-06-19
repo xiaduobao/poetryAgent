@@ -9,7 +9,7 @@ from app.agent.compound_pipeline import _heuristic_decompose
 from app.agent.intent_classifier import classify_single_intent
 from app.agent.intent_rules import rule_based_intent
 
-GOLDEN_PATH = Path(__file__).resolve().parents[1] / "eval" / "intent_golden_set.json"
+GOLDEN_PATH = Path(__file__).resolve().parents[2] / "tests" / "eval" / "intent_golden_set.json"
 
 
 def load_golden(path: Path | None = None) -> list[dict]:
