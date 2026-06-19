@@ -430,6 +430,19 @@ python scripts/download_models.py
 
 ---
 
+## 2026-06-18 · 「推荐作者主要作品」意图识别修复
+
+**问**：「推荐王加宝的主要作品」被识别为作者查询后，输出冗长传记 + 诗词卡片，体验不对。
+
+**答**：
+1. **规则**：新增 `author_works` 规则（`推荐/有哪些` + `作品/代表作/名篇` → `tool_author`），「推荐王加宝的主要作品」规则命中，不再依赖 LLM 误判。
+2. **输出**：`tool_author` 等工具类意图不再附加诗词 JSON 卡片提示；整理回答时要求以列表呈现代表作。
+3. **测试**：`tests/unit/test_intent.py` 与 golden set 增加该用例。
+
+**标签**：`other`
+
+---
+
 ## 2026-06-18 · 配图示例点击需先上传图片（方案 A）
 
 **问**：点击「上传风景照，写一首五言绝句」会直接发纯文字，未要求选图。
@@ -438,5 +451,171 @@ python scripts/download_models.py
 1. `promptExamples.ts` 示例改为 `PromptExample` 类型（`text` / `image`）。
 2. 点击 `image` 类型：填入输入框、弹出文件选择器、显示提示，**不自动发送**；未选图时发送按钮禁用。
 3. `ChatInput` 暴露 `openImagePicker()`；`PromptChips` 配图示例显示 📷 图标。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 简历描述与项目优化建议
+
+**问**：如何将 poetryAgent 写进简历？还需要优化哪些内容？
+
+**答**：
+
+**简历一句话**：古典诗词鉴赏智能助手 — 基于 LangGraph 的多分支 Agent + 混合检索 RAG，全栈上线（React / FastAPI / PostgreSQL / Redis），部署于阿里云 ECS。
+
+**可量化素材**：语料约 200 首诗词 Markdown；7+ 工具（格律/作者/对比/主题/创作等）；混合检索 BM25+向量+BGE-Rerank；意图 golden set + RAG golden set；CI pytest 覆盖率 ≥40%。
+
+**优先优化（简历前）**：
+1. README 顶部加 Demo 链接（`cnpoetry.top` 或 GitHub Pages 截图）+ CI badge
+2. 跑 `eval_rag.py` / `intent_eval` 记下命中率、延迟 p50，写进 README「效果指标」
+3. 准备 1 张架构图 + 2～3 张产品截图（流式对话、引用来源、LangSmith Run 树）
+4. 面试故事：复合问题拆解并行、规则+LLM 意图、Checkpoint 降级链、ACR 部署
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 作为简历项目是否合格
+
+**问**：这个项目作为个人简历项目合格不？
+
+**答**：**合格，且偏强**（AI 应用 / 后端 / 全栈初级～中级）。覆盖 RAG+Agent+全栈+上线+可观测+评测，超过多数「只调 API 的 Demo」。短板：缺量化效果数据、评测集偏小、无真实用户指标；投大厂需把 compound/混合检索/部署坑讲深。校招/1～3 年可作主项目；3 年+建议搭配业务侧项目。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 十年后端、首个完整 AI 项目如何写简历
+
+**问**：工作十年、以前做后端，这是第一个完整 AI 项目，怎么定位？
+
+**答**：
+- **项目本身合格**，但对 10 年资历是「AI 能力证明」，不是「职级证明」；简历主线仍应是十年后端（高并发/分布式/业务），AI 项目作**转型亮点**（1 个项目块，约占项目经历 20～30%）。
+- **叙事**：「用工程化方式落地 LLM 应用」— 强调部署、可观测、降级、评测、配额，而非只会调 Prompt。
+- **面试准备**：混合检索取舍、compound 并行、Checkpoint 降级、JWT+限流；对比「若在生产会怎么做」（缓存、异步队列、成本管控）。
+- **缺口**：缺业务规模与线上 AI 指标；可补 1 个与工作相关的 AI 试点或开源贡献，避免被当成「兴趣 Demo」。
+
+**标签**：`other`
+
+---
+
+## 2026-06-18 · 局部有限 ReAct（工具多轮 / 低置信度兜底 / RAG-as-tool）
+
+**问**：局部引入有限 ReAct。
+
+**答**：
+- 新模块 `app/agent/react_loop.py`：`run_limited_react`、`poetry_search` 工具（混合检索封装）
+- **工具多轮**：`tool_*` 意图走 ReAct 循环（默认 max 3 步），如 lookup → meter
+- **低置信度兜底**：LLM 意图且 confidence < 0.65 时走 ReAct（规则命中仍走快路径）
+- **RAG 快路径保留**：高置信 `rag` 仍直接 `retrieve_rag`，不绕 ReAct
+- 配置见 `.env.example`：`REACT_*` 系列；测试 `tests/unit/test_react_loop.py`
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 「分析这首诗的格律」未继承上文诗题
+
+**问**：用户先查《枫桥夜泊》原文，再点「分析这首诗的格律」，助手回复未提供诗题/原文。
+
+**答**：
+- **根因**：`tool_meter` 提示只要求「从当前输入提取诗题」，指代问法（这首诗/上面那首）未解析对话历史。
+- **修复**：新增 `app/agent/context_resolver.py`，从历史上文（《》书名号、工具 JSON 返回、助手回答）解析诗题/作者/原文，并注入 ReAct / 工具调用 / 总结阶段。
+- **涉及文件**：`react_loop.py`、`graph.py`、`compound_pipeline.py`、`prompts.py`；测试 `tests/unit/test_context_resolver.py`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 手机端侧边栏透明叠层
+
+**问**：手机版打开会话列表时「新建对话」区域透明，背后聊天内容透出来，体验差。
+
+**答**：
+- **根因**：`SessionSidebar` 使用 `bg-muted/30`（30% 不透明），桌面并排尚可，移动端抽屉叠层会透出主界面。
+- **修复**：移动端（有 `onClose` 时）改为 `bg-background` 实底；抽屉改为左栏 + 右侧半透明遮罩的 flex 布局。
+- **文件**：`frontend/src/components/sidebar/SessionSidebar.tsx`、`frontend/src/components/layout/AppLayout.tsx`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 意图识别路由日志
+
+**问**：意图识别需要更多日志，便于知道走了哪条链路。
+
+**答**：
+- 新增 `app/agent/route_log.py`，统一 `[agent-route]` 前缀。
+- 关键节点：`intent_classify`（rule/llm/suggested + rule 名）、`decompose`、`sub_intents`、`prepare_start`、`execution_path`（rag/tool/react/chat）、`tool_path`、`react_start/done`、`compound_route`。
+- 排查：`grep '[agent-route]'` 或按 `thread_id` 过滤容器日志。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 工具路径不再无条件走 ReAct
+
+**问**：无论如何都跳转到 react_loop，因为 confidence 写死为 1.0，阈值判断失效。
+
+**答**：
+- **根因**：`react_tool_loop_enabled=true` 时所有 `tool_*` 强制 ReAct，与 confidence 无关；规则 confidence 默认全是 1.0。
+- **修复**：新增 `should_use_react_tool_loop()`——`confidence >= 0.65` 走 `legacy_single`，低于阈值或指代性提问（缺诗题）才 ReAct；各规则设差异化 confidence（lookup 0.95、poem_title 0.75 等）。
+- **日志**：`tool_path` 现含 `source`、`confidence`、`path=legacy_single|react_loop`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 多意图时 rule_based_intent 怎么处理
+
+**问**：`intent_rules.rule_based_intent` 若用户一句话含多个意图怎么办？
+
+**答**：
+- `match_intent_rules` 会返回**全部命中规则**（按 priority 排序）；`rule_based_intent` / `classify_single_intent` **只取第一条**，其余丢弃。
+- 主链路走 `classify_single_intent`，`rule_based_intent` 主要用于 eval。
+- **复合问题**需开 `COMPOUND_INTENT_ENABLED=true`：`decompose_query` 按「并/还有/另外…」拆句，子句分别分类；仅当子意图**互不相同**才并行 compound，否则仍单路径。
+- 无连接词的叠意图（如同时像 lookup + meter）目前**无法**在规则层并行，只能靠 priority 决胜负。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 规则层显式 multi-intent（已撤销）
+
+**说明**：曾新增 `classify_intent_rules` / `RULE_MULTI_INTENT_ENABLED` 支持无连接词多意图并行；已回退。多意图仍仅通过 `COMPOUND_INTENT_ENABLED` + 连接词拆解；规则层恢复为 `match_intent_rules` 取最高 priority 单意图。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 意图识别链路梳理
+
+**问**：当前意图识别链路逻辑清晰梳理。
+
+**答**：见下方用户回复中的总览图与分层说明；日志统一 grep `[agent-route]`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 意图识别档 A 优化（上下文 + 融合 + 规则冲突）
+
+**问**：执行档 A 优化意图识别。
+
+**答**：
+1. **分类前上下文增强**：`prepare_query_for_intent()` 在 `classify_single_intent` 入口调用 `resolve_poem_context` + `augment_query_with_context`；`graph.classify_intent` 与 compound 路径传入 `messages`。
+2. **规则/suggested 融合**：rule 与 decompose 的 `suggested_intent` 一致 → `rule+suggested` 取较高 confidence；冲突 → 降 confidence 或 suggested≥0.9 覆盖弱 rule；suggested 下限 0.7（原 0.8）以减少重复 LLM。
+3. **规则冲突检测**：`resolve_rule_match()` / `is_ambiguous_rule_match()` — 不同 intent 且 priority 差≤10 时 confidence 压至 ≤0.58，触发 ReAct。
+4. **规则负向条件**：`theme` 排除「作品/代表作」；`poem_title` 排除「格律/平仄/押韵」。
+**标签**：`other`
+
+---
+
+## 2026-06-19 · 意图识别链路梳理（当前实现）
+
+**问**：梳理当前意图识别的链路逻辑。
+
+**答**：入口由 `COMPOUND_INTENT_ENABLED` 分叉 → 单路径 `classify_intent` 或复合 `decompose→classify_sub_queries`；核心分类均为 `classify_single_intent`（上下文增强 → 规则 → rule/suggested 融合 → LLM）；路由 `rag|tools|chat`；执行层 ReAct 兜底低置信/指代。日志：`grep '[agent-route]'`。
 
 **标签**：`other`

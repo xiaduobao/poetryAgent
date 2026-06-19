@@ -43,6 +43,8 @@ def _state(message: str) -> dict:
         ("介绍杜甫的生平", "tool_author"),
         ("李白和杜甫的诗歌风格有什么区别？", "tool_compare"),
         ("推荐几首关于思乡的诗", "tool_theme"),
+        ("推荐王加宝的主要作品", "tool_author"),
+        ("苏轼的代表作有哪些", "tool_author"),
         ("【看图创作】\n画面描述：远山含黛\n用户要求：写五言绝句", "tool_writing"),
         ("查找《春晓》的原文", "tool_lookup"),
     ],

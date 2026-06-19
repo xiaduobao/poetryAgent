@@ -44,12 +44,14 @@ def _build_rules() -> tuple[IntentRule, ...]:
             "tool_writing",
             100,
             lambda t: t.startswith("【看图创作】"),
+            confidence=1.0,
         ),
         IntentRule(
             "writing",
             "tool_writing",
             95,
             lambda t: _has_any(t, ("写一首", "创作", "对联", "藏头", "填词", "仿写", "帮我写")),
+            confidence=0.95,
         ),
         IntentRule(
             "allusion",
@@ -57,6 +59,7 @@ def _build_rules() -> tuple[IntentRule, ...]:
             90,
             lambda t: _has_any(t, ("什么意思", "指什么", "典故", "含义", "是指"))
             and _has_any(t, ("中的", "里的", "「", "『", "这句", "字")),
+            confidence=0.88,
         ),
         IntentRule(
             "theme",
@@ -66,7 +69,9 @@ def _build_rules() -> tuple[IntentRule, ...]:
             and _has_any(
                 t,
                 ("诗", "词", "主题", "思乡", "送别", "怀古", "春天", "秋天", "爱情"),
-            ),
+            )
+            and not _has_any(t, ("作品", "代表作", "名篇", "诗篇", "诗作", "名诗")),
+            confidence=0.88,
         ),
         IntentRule(
             "lookup",
@@ -78,6 +83,7 @@ def _build_rules() -> tuple[IntentRule, ...]:
                 and "》" in t
                 and _has_any(t, ("原文", "注释", "译文", "查找", "全文"))
             ),
+            confidence=0.95,
         ),
         IntentRule(
             "compare",
@@ -88,18 +94,32 @@ def _build_rules() -> tuple[IntentRule, ...]:
                 _has_any(t, ("李白", "杜甫", "苏轼", "李清照", "诗人", "风格"))
                 or _NAME_BEFORE_DE.search(t) is not None
             ),
+            confidence=0.92,
+        ),
+        IntentRule(
+            "author_works",
+            "tool_author",
+            76,
+            lambda t: _has_any(t, ("推荐", "有哪些", "列出", "列举", "介绍"))
+            and _has_any(t, ("作品", "代表作", "名篇", "诗篇", "诗作", "名诗", "诗词"))
+            and not _has_any(t, ("对比", "区别", "比较")),
+            confidence=0.90,
         ),
         IntentRule(
             "author",
             "tool_author",
             75,
-            lambda t: _has_any(t, ("生平", "介绍", "是谁", "代表作"))
+            lambda t: _has_any(
+                t,
+                ("生平", "介绍", "是谁", "代表作", "主要作品", "名篇"),
+            )
             and (
                 _AUTHOR_HINT.search(t) is not None
                 or _NAME_BEFORE_DE.search(t) is not None
                 or _has_any(t, ("李白", "杜甫", "苏轼", "李清照"))
             )
             and not _has_any(t, ("对比", "区别", "比较")),
+            confidence=0.88,
         ),
         IntentRule(
             "meter",
@@ -107,6 +127,7 @@ def _build_rules() -> tuple[IntentRule, ...]:
             70,
             lambda t: _has_any(t, ("格律", "平仄", "押韵", "体裁"))
             and not _has_any(t, ("赏析", "鉴赏")),
+            confidence=0.92,
         ),
         IntentRule(
             "meter_analyze",
@@ -115,6 +136,7 @@ def _build_rules() -> tuple[IntentRule, ...]:
             lambda t: "分析" in t
             and _has_any(t, ("格律", "平仄", "押韵"))
             and not _has_any(t, ("赏析", "鉴赏")),
+            confidence=0.90,
         ),
         IntentRule(
             "appreciation",
@@ -122,6 +144,7 @@ def _build_rules() -> tuple[IntentRule, ...]:
             60,
             lambda t: _has_any(t, ("赏析", "鉴赏", "欣赏", "主旨"))
             or ("含义" in t and "《" in t),
+            confidence=0.90,
         ),
         IntentRule(
             "poem_title",
@@ -131,12 +154,20 @@ def _build_rules() -> tuple[IntentRule, ...]:
                 _POEM_TITLE.search(t) is not None
                 or _has_any(t, _FAMOUS_POEMS)
             )
-            and not _has_any(t, ("原文", "注释", "查找", "全文", "译文")),
+            and not _has_any(
+                t,
+                ("原文", "注释", "查找", "全文", "译文", "格律", "平仄", "押韵"),
+            ),
+            confidence=0.75,
         ),
     )
 
 
 _RULES = _build_rules()
+
+# 不同 intent 的 top 规则 priority 差 ≤ 此值时视为冲突，下调 confidence 触发 ReAct
+RULE_AMBIGUITY_PRIORITY_GAP = 10
+RULE_AMBIGUOUS_CONFIDENCE_CAP = 0.58
 
 
 def match_intent_rules(text: str) -> list[RuleMatch]:
@@ -160,9 +191,41 @@ def match_intent_rules(text: str) -> list[RuleMatch]:
     return matches
 
 
+def is_ambiguous_rule_match(matches: list[RuleMatch]) -> bool:
+    """多条不同 intent 的规则 priority 接近时视为冲突。"""
+    if len(matches) < 2:
+        return False
+    best = matches[0]
+    for other in matches[1:]:
+        if other.intent == best.intent:
+            continue
+        if best.priority - other.priority <= RULE_AMBIGUITY_PRIORITY_GAP:
+            return True
+    return False
+
+
+def resolve_rule_match(text: str) -> tuple[RuleMatch | None, bool]:
+    """
+    选取最佳规则命中；若存在 priority 接近的不同 intent，标记 ambiguous 并下调 confidence。
+    """
+    matches = match_intent_rules(text)
+    if not matches:
+        return None, False
+    best = matches[0]
+    ambiguous = is_ambiguous_rule_match(matches)
+    if ambiguous:
+        best = RuleMatch(
+            intent=best.intent,
+            priority=best.priority,
+            confidence=min(best.confidence, RULE_AMBIGUOUS_CONFIDENCE_CAP),
+            rule_name=best.rule_name,
+        )
+    return best, ambiguous
+
+
 def rule_based_intent(text: str) -> str:
     """返回最高优先级规则意图；无命中则 chat。"""
-    matches = match_intent_rules(text)
-    if matches:
-        return matches[0].intent
+    match, _ = resolve_rule_match(text)
+    if match:
+        return match.intent
     return "chat"

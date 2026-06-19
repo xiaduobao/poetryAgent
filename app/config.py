@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     # 复合意图：单条消息多问题拆解与并行执行
     compound_intent_enabled: bool = False
 
+    # 有限 ReAct：工具多轮 / 低置信度兜底 / RAG-as-tool
+    react_enabled: bool = True
+    react_max_steps: int = 3
+    react_low_confidence_threshold: float = 0.65
+    react_low_confidence_fallback: bool = True
+    react_tool_loop_enabled: bool = True  # 低置信度/指代性 tool 才走 ReAct，高置信度走 legacy 单轮
+    react_rag_as_tool_enabled: bool = True
+    react_rag_max_searches: int = 2
+
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in ("production", "prod")

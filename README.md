@@ -16,8 +16,8 @@ FastAPI (/api/v1/chat/stream)
     ├─ 会话/消息持久化（PostgreSQL / 本地 SQLite）
     └─ LangGraph Agent
         ├─ 意图识别（规则 + LLM）
-        ├─ RAG 分支 → 混合检索(BM25+向量) → BGE-Rerank → LLM 鉴赏
-        ├─ 工具分支 → author / meter / compare 等 → LLM 整理
+        ├─ 高置信 RAG 快路径 / 工具有限 ReAct（多轮 + poetry_search）
+        ├─ 低置信度 → ReAct 兜底
         └─ 闲聊分支
     ↓
 多轮记忆（thread_id + LangGraph Checkpoint：Postgres → Redis → MemorySaver 降级）

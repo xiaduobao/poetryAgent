@@ -15,6 +15,7 @@ from app.agent.intent_classifier import classify_single_intent
 from app.agent.intent_models import DecomposeResult, DecomposedSubQuery, SubQueryIntent, VALID_INTENTS
 from app.agent.llm import get_llm
 from app.agent.prompts import COMPOUND_SYNTHESIS_PROMPT, QUERY_DECOMPOSE_PROMPT, SYSTEM_PROMPT, structured_output_hint
+from app.agent.route_log import log_route
 from app.observability.langsmith import get_run_config, traceable, update_run_metadata
 from app.security.filter import strip_user_input
 
@@ -103,12 +104,14 @@ def decompose_query(text: str) -> DecomposeResult:
     llm = get_llm()
     prompt = QUERY_DECOMPOSE_PROMPT.format(query=clean)
     result: DecomposeResult | None = None
+    decompose_source = "unknown"
 
     try:
         structured = llm.with_structured_output(DecomposeResult)
         out = structured.invoke(prompt, config=get_run_config(step="decompose_query"))
         if isinstance(out, DecomposeResult) and out.sub_queries:
             result = out
+            decompose_source = "structured"
     except Exception as e:
         logger.debug("structured decompose failed: %s", e)
 
@@ -116,9 +119,12 @@ def decompose_query(text: str) -> DecomposeResult:
         resp = llm.invoke(prompt, config=get_run_config(step="decompose_query"))
         raw = resp.content.strip() if hasattr(resp, "content") else str(resp)
         result = _parse_decompose_json(raw)
+        if result is not None:
+            decompose_source = "json"
 
     if result is None or not result.sub_queries:
         result = _heuristic_decompose(clean)
+        decompose_source = "heuristic"
 
     if result.confidence < 0.6 or (result.is_compound and len(result.sub_queries) == 1):
         intent, _, conf = classify_single_intent(clean)
@@ -129,8 +135,22 @@ def decompose_query(text: str) -> DecomposeResult:
                 DecomposedSubQuery(text=clean, suggested_intent=intent, confidence=conf)  # type: ignore[arg-type]
             ],
         )
+        decompose_source = "single_fallback"
 
     decompose_ms = round((time.perf_counter() - start) * 1000, 2)
+    sub_summary = "; ".join(
+        f"{sq.text[:40]}→{sq.suggested_intent}" for sq in result.sub_queries[:4]
+    )
+    log_route(
+        "decompose",
+        source=decompose_source,
+        is_compound=result.is_compound,
+        sub_count=len(result.sub_queries),
+        confidence=result.confidence,
+        ms=decompose_ms,
+        subs=sub_summary,
+        query=clean,
+    )
     update_run_metadata(
         is_compound=result.is_compound,
         sub_query_count=len(result.sub_queries),
@@ -140,13 +160,18 @@ def decompose_query(text: str) -> DecomposeResult:
     return result
 
 
-def classify_sub_queries(decomposed: DecomposeResult) -> list[SubQueryIntent]:
+def classify_sub_queries(
+    decomposed: DecomposeResult,
+    *,
+    messages: list[BaseMessage] | None = None,
+) -> list[SubQueryIntent]:
     sub_queries: list[SubQueryIntent] = []
     for i, sq in enumerate(decomposed.sub_queries):
         intent, source, confidence = classify_single_intent(
             sq.text,
             suggested_intent=sq.suggested_intent,
             suggested_confidence=sq.confidence,
+            messages=messages,
         )
         sub_queries.append(
             SubQueryIntent(
@@ -157,6 +182,10 @@ def classify_sub_queries(decomposed: DecomposeResult) -> list[SubQueryIntent]:
                 confidence=confidence,
             )
         )
+    sub_summary = "; ".join(
+        f"{s.id}:{s.intent}({s.intent_source},{s.confidence:.2f})" for s in sub_queries
+    )
+    log_route("sub_intents", count=len(sub_queries), subs=sub_summary)
     return sub_queries
 
 
@@ -229,25 +258,24 @@ def _run_tool_for_subtask(
     sub: SubQueryIntent,
     prior_messages: list[BaseMessage],
 ) -> str:
+    from app.agent.context_resolver import format_poem_context_hint, resolve_poem_context
     from app.agent.graph import _run_tools
+    from app.agent.react_loop import INTENT_TOOL_HINTS
     from app.agent.tools import AGENT_TOOLS
 
     llm = get_llm().bind_tools(AGENT_TOOLS)
-    hint = {
-        "tool_author": "请使用 author_query 工具查询作者信息。",
-        "tool_meter": "请使用 meter_analysis 工具分析格律，从用户输入提取诗题。",
-        "tool_compare": "请使用 style_compare 工具对比诗人风格。",
-        "tool_lookup": "请使用 poem_lookup 工具查找诗词原文、注释或译文。",
-        "tool_theme": "请使用 theme_recommend 工具按主题推荐诗词。",
-        "tool_allusion": "请使用 allusion_explain 工具解释典故或字词含义。",
-        "tool_writing": "请使用 writing_assistant 工具获取创作指南，再据此为用户创作示例。",
-    }.get(sub.intent, "请根据问题选择合适的工具。")
+    hint = INTENT_TOOL_HINTS.get(sub.intent, "请根据问题选择合适的工具。")
+    poem_ctx = resolve_poem_context([*prior_messages, HumanMessage(content=sub.text)], sub.text)
+    ctx_hint = format_poem_context_hint(poem_ctx)
+    user_block = f"{hint}\n用户问题：{sub.text}"
+    if ctx_hint:
+        user_block = f"{ctx_hint}\n\n{user_block}"
 
     resp = llm.invoke(
         [
             SystemMessage(content=SYSTEM_PROMPT),
             *prior_messages[-6:],
-            HumanMessage(content=f"{hint}\n用户问题：{sub.text}"),
+            HumanMessage(content=user_block),
         ],
         config=get_run_config(step="prepare_tool_call", intent=sub.intent),
     )

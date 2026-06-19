@@ -131,15 +131,9 @@ export function AppLayout() {
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setSidebarOpen(false)}
-            aria-label="关闭侧边栏"
-          />
+        <div className="fixed inset-0 z-40 flex md:hidden">
           <SessionSidebar
-            className="relative z-50 h-full shadow-xl"
+            className="relative z-50 h-full shrink-0 shadow-xl"
             sessions={sessions}
             loading={loading}
             query={query}
@@ -150,6 +144,12 @@ export function AppLayout() {
             onRename={renameSession}
             onDelete={handleDelete}
             onClose={() => setSidebarOpen(false)}
+          />
+          <button
+            type="button"
+            className="min-w-0 flex-1 bg-black/50"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="关闭侧边栏"
           />
         </div>
       )}

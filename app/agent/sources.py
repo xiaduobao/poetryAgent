@@ -110,8 +110,9 @@ def build_sources_from_prepared(prepared: PreparedAgent) -> list[dict[str, Any]]
 
     if mode == "tool_summary":
         refs = _sources_from_tool_result(state.get("tool_result") or "", intent)
+        rag_refs = list(state.get("source_refs") or [])
         if refs:
             return refs
-        return list(state.get("source_refs") or [])
+        return rag_refs
 
     return []

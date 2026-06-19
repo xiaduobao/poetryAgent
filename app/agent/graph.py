@@ -10,7 +10,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.graph import END, StateGraph
 from app.agent.checkpoint import get_checkpointer
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
 from langgraph.types import Send
 
 from app.agent.compound_pipeline import (
@@ -24,6 +23,7 @@ from app.agent.compound_pipeline import (
     should_use_compound_pipeline,
     unique_sub_intents_for_display,
 )
+from app.agent.context_resolver import format_poem_context_hint, resolve_poem_context
 from app.agent.intent_classifier import classify_single_intent
 from app.agent.intent_models import SubQueryIntent
 from app.agent.llm import get_llm
@@ -32,6 +32,13 @@ from app.agent.prompts import (
     SYSTEM_PROMPT,
     structured_output_hint,
 )
+from app.agent.react_loop import (
+    INTENT_TOOL_HINTS,
+    run_limited_react,
+    should_react_fallback,
+    should_use_react_tool_loop,
+)
+from app.agent.route_log import log_route
 from app.agent.sources import build_sources_from_prepared
 from app.agent.tools import AGENT_TOOLS
 from app.config import get_settings
@@ -56,6 +63,11 @@ class AgentState(TypedDict):
     original_query: NotRequired[str]
     sub_query: NotRequired[dict]
     completed_subtasks: NotRequired[Annotated[list[dict], operator.add]]
+    intent_confidence: NotRequired[float]
+    intent_source: NotRequired[str]
+    react_steps: NotRequired[int]
+    react_mode: NotRequired[bool]
+    react_tool_rounds: NotRequired[int]
 
 
 class PreparedAgent(TypedDict):
@@ -74,8 +86,18 @@ class PreparedAgent(TypedDict):
 def classify_intent(state: AgentState) -> AgentState:
     """意图识别：规则优先，LLM 结构化兜底。"""
     last = _last_user_text(state)
-    intent, intent_source, confidence = classify_single_intent(last)
+    intent, intent_source, confidence = classify_single_intent(
+        last,
+        messages=state.get("messages"),
+    )
 
+    log_route(
+        "classify_node",
+        intent=intent,
+        source=intent_source,
+        confidence=confidence,
+        query=last,
+    )
     update_run_metadata(
         final_intent=intent,
         intent_source=intent_source,
@@ -87,6 +109,8 @@ def classify_intent(state: AgentState) -> AgentState:
         "intent": intent,
         "primary_intent": intent,
         "is_compound": False,
+        "intent_confidence": confidence,
+        "intent_source": intent_source,
     }
 
 
@@ -95,7 +119,7 @@ def decompose_node(state: AgentState) -> AgentState:
     """复合问题拆解节点。"""
     last = _last_user_text(state)
     decomposed = decompose_query(last)
-    sub_queries = classify_sub_queries(decomposed)
+    sub_queries = classify_sub_queries(decomposed, messages=state.get("messages"))
     return {
         **state,
         "sub_queries": [s.model_dump() for s in sub_queries],
@@ -202,6 +226,12 @@ def retrieve_rag(state: AgentState) -> AgentState:
         query=query[:200],
         filters=filters or None,
     )
+    log_route(
+        "rag_retrieve",
+        doc_count=len(docs),
+        query=query,
+        filters=filters or None,
+    )
     return {**state, "rag_context": context, "source_refs": source_refs}
 
 
@@ -234,21 +264,19 @@ def prepare_tool_call(state: AgentState) -> AgentState:
     if subs and len(subs) == 1:
         intent = subs[0].get("intent", intent)
         state = {**state, "intent": intent}
-    hint = {
-        "tool_author": "请使用 author_query 工具查询作者信息。",
-        "tool_meter": "请使用 meter_analysis 工具分析格律，从用户输入提取诗题。",
-        "tool_compare": "请使用 style_compare 工具对比诗人风格。",
-        "tool_lookup": "请使用 poem_lookup 工具查找诗词原文、注释或译文。",
-        "tool_theme": "请使用 theme_recommend 工具按主题推荐诗词。",
-        "tool_allusion": "请使用 allusion_explain 工具解释典故或字词含义。",
-        "tool_writing": "请使用 writing_assistant 工具获取创作指南，再据此为用户创作示例。若用户提供了画面描述，请以画面意象为主题创作。",
-    }.get(intent, "请根据问题选择合适的工具。")
+    hint = INTENT_TOOL_HINTS.get(intent, "请根据问题选择合适的工具。")
+    query = _last_user_text(state)
+    poem_ctx = resolve_poem_context(state["messages"], query)
+    ctx_hint = format_poem_context_hint(poem_ctx)
+    user_block = f"{hint}\n用户问题：{query}"
+    if ctx_hint:
+        user_block = f"{ctx_hint}\n\n{user_block}"
 
     resp = llm.invoke(
         [
             SystemMessage(content=SYSTEM_PROMPT),
             *state["messages"][-6:],
-            HumanMessage(content=hint + "\n用户问题：" + _last_user_text(state)),
+            HumanMessage(content=user_block),
         ],
         config=get_run_config(step="prepare_tool_call", intent=intent),
     )
@@ -259,16 +287,35 @@ def prepare_tool_call(state: AgentState) -> AgentState:
             for tc in resp.tool_calls
         ]
     update_run_metadata(intent=intent, tool_calls=tool_calls or None)
+    log_route(
+        "prepare_tool_call",
+        intent=intent,
+        tool_calls=",".join(tool_calls) if tool_calls else "none",
+        query=query,
+        has_context=bool(ctx_hint),
+    )
     return {**state, "messages": [resp]}
 
 
-def _tool_summary_user_content(intent: str, tool_text: str) -> str:
-    base = f"工具返回结果：\n{tool_text}\n\n请整理为中文回答，并引用工具中的事实。"
+def _tool_summary_user_content(intent: str, tool_text: str, rag_context: str = "") -> str:
+    parts: list[str] = []
+    if rag_context.strip():
+        parts.append(f"知识库检索结果：\n{rag_context}")
+    if tool_text.strip():
+        parts.append(f"工具返回结果：\n{tool_text}")
+    combined = "\n\n".join(parts) if parts else "（无工具或检索结果）"
+    base = f"{combined}\n\n请整理为中文回答，并引用工具与知识库中的事实。"
     if intent == "tool_writing":
         return (
             f"{base}\n\n"
             "这是诗词创作任务：须按工具 rules 与 output_requirements 先写出完整诗作"
             "（每句一行），再在 JSON 中用 lines 数组列出全部句子。"
+        )
+    if intent == "tool_author":
+        return (
+            f"{base}\n\n"
+            "若用户问代表作/作品/名篇：以 Markdown 列表呈现各作品名称，"
+            "每项附一两句简介或名句；生平风格可简要带过，勿输出 JSON 代码块。"
         )
     return base
 
@@ -277,13 +324,23 @@ def generate_tool_summary(state: AgentState) -> AgentState:
     """工具执行后，由 LLM 整理为自然语言回答。"""
     llm = get_llm()
     intent = state.get("intent", "chat")
+    query = _last_user_text(state)
     tool_msgs = [m for m in state["messages"] if m.type == "tool"]
     tool_text = "\n".join(getattr(m, "content", str(m)) for m in tool_msgs)
+
+    user_content = _tool_summary_user_content(
+        intent,
+        tool_text,
+        state.get("rag_context") or "",
+    )
+    ctx_hint = format_poem_context_hint(resolve_poem_context(state["messages"], query))
+    if ctx_hint:
+        user_content = f"{ctx_hint}\n\n{user_content}"
 
     resp = llm.invoke(
         [
             SystemMessage(content=SYSTEM_PROMPT + structured_output_hint(intent)),
-            HumanMessage(content=_tool_summary_user_content(intent, tool_text)),
+            HumanMessage(content=user_content),
         ]
     )
     return {
@@ -313,16 +370,7 @@ def route_by_intent(state: AgentState) -> Literal["retrieve", "tools", "chat"]:
     return "chat"
 
 
-def should_continue_tools(state: AgentState) -> Literal["tools", "summarize"]:
-    last = state["messages"][-1]
-    if hasattr(last, "tool_calls") and last.tool_calls:
-        return "tools"
-    return "summarize"
-
-
 # ---------- Graph build ----------
-
-_tool_node = ToolNode(AGENT_TOOLS)
 
 
 def _build_graph():
@@ -334,8 +382,7 @@ def _build_graph():
     g.add_node("merge_subtasks", merge_subtasks_node)
     g.add_node("retrieve", retrieve_rag)
     g.add_node("generate_rag", generate_rag_answer)
-    g.add_node("prepare_tools", prepare_tool_call)
-    g.add_node("tools", _tool_node)
+    g.add_node("prepare_tools", _prepare_tool_path)
     g.add_node("summarize_tools", generate_tool_summary)
     g.add_node("chat", general_chat)
 
@@ -380,12 +427,7 @@ def _build_graph():
     g.add_edge("generate_rag", END)
     g.add_edge("chat", END)
 
-    g.add_conditional_edges(
-        "prepare_tools",
-        should_continue_tools,
-        {"tools": "tools", "summarize": "summarize_tools"},
-    )
-    g.add_edge("tools", "summarize_tools")
+    g.add_edge("prepare_tools", "summarize_tools")
     g.add_edge("summarize_tools", END)
 
     return g.compile(checkpointer=get_checkpointer())
@@ -420,6 +462,11 @@ def _initial_state(
         "primary_intent": "",
         "original_query": "",
         "completed_subtasks": [],
+        "intent_confidence": 1.0,
+        "intent_source": "",
+        "react_steps": 0,
+        "react_mode": False,
+        "react_tool_rounds": 0,
     }
 
 
@@ -487,14 +534,62 @@ def prepare_agent(
 ) -> PreparedAgent:
     """运行意图识别与检索/工具阶段，返回待流式生成的状态。"""
     prior = _prior_messages(thread_id)
-    if get_settings().compound_intent_enabled:
+    compound_on = get_settings().compound_intent_enabled
+    log_route(
+        "prepare_start",
+        thread_id=thread_id,
+        pipeline="compound" if compound_on else "single",
+        prior_messages=len(prior),
+        query=message,
+    )
+    if compound_on:
         return _prepare_compound_agent(message, thread_id, filters, prior)
 
     state = _initial_state(message, filters, prior)
     return _prepare_single_agent(state)
 
 
+def _prepare_tool_path(state: AgentState) -> AgentState:
+    """工具意图：高置信度 legacy 单轮，低置信度/指代性提问 ReAct 多轮。"""
+    settings = get_settings()
+    intent = state.get("intent", "chat")
+    source = state.get("intent_source", "rule")
+    confidence = state.get("intent_confidence", 1.0)
+    query = _last_user_text(state)
+    use_react = should_use_react_tool_loop(
+        source,
+        confidence,
+        intent=intent,
+        query=query,
+    )
+    log_route(
+        "tool_path",
+        intent=intent,
+        source=source,
+        confidence=confidence,
+        path="react_loop" if use_react else "legacy_single",
+        query=query,
+    )
+    if use_react:
+        return run_limited_react(
+            state,
+            reason="tool_loop",
+            intent_hint=INTENT_TOOL_HINTS.get(intent),
+            include_rag_tool=settings.react_rag_as_tool_enabled,
+        )
+
+    state = prepare_tool_call(state)
+    last = state["messages"][-1]
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        tool_msgs = _run_tools(state)
+        state = {**state, "messages": state["messages"] + tool_msgs}
+    tool_msgs = [m for m in state["messages"] if m.type == "tool"]
+    state["tool_result"] = "\n".join(getattr(m, "content", str(m)) for m in tool_msgs)
+    return state
+
+
 def _prepare_single_agent(state: AgentState) -> PreparedAgent:
+    settings = get_settings()
     if not state.get("intent"):
         state = classify_intent(state)
     else:
@@ -504,25 +599,54 @@ def _prepare_single_agent(state: AgentState) -> PreparedAgent:
             "is_compound": False,
         }
     intent = state.get("intent", "chat")
+    confidence = state.get("intent_confidence", 1.0)
+    source = state.get("intent_source", "rule")
+    query = _last_user_text(state)
 
-    if intent == "rag":
-        state = retrieve_rag(state)
-        mode: Literal["rag", "tool_summary", "chat", "compound_synthesis"] = "rag"
-    elif intent.startswith("tool_"):
-        state = prepare_tool_call(state)
-        last = state["messages"][-1]
-        if hasattr(last, "tool_calls") and last.tool_calls:
-            tool_msgs = _run_tools(state)
-            state = {**state, "messages": state["messages"] + tool_msgs}
-        tool_msgs = [m for m in state["messages"] if m.type == "tool"]
-        state["tool_result"] = "\n".join(
-            getattr(m, "content", str(m)) for m in tool_msgs
+    mode: Literal["rag", "tool_summary", "chat", "compound_synthesis"]
+    exec_path: str
+
+    if settings.react_enabled and should_react_fallback(source, confidence):
+        hint = INTENT_TOOL_HINTS.get(intent)
+        state = run_limited_react(
+            state,
+            reason="low_confidence",
+            intent_hint=hint,
+            include_rag_tool=settings.react_rag_as_tool_enabled,
         )
         mode = "tool_summary"
+        exec_path = "react_low_confidence"
+    elif intent == "rag":
+        state = retrieve_rag(state)
+        mode = "rag"
+        exec_path = "rag_retrieve"
+    elif intent.startswith("tool_"):
+        state = _prepare_tool_path(state)
+        mode = "tool_summary"
+        exec_path = "tool_path"
     else:
         mode = "chat"
+        exec_path = "general_chat"
 
-    update_run_metadata(intent=intent, mode=mode, filters=state.get("filters") or None)
+    log_route(
+        "execution_path",
+        pipeline="single",
+        intent=intent,
+        source=source,
+        confidence=confidence,
+        path=exec_path,
+        mode=mode,
+        react_mode=state.get("react_mode", False),
+        react_steps=state.get("react_steps"),
+        query=query,
+    )
+    update_run_metadata(
+        intent=intent,
+        mode=mode,
+        filters=state.get("filters") or None,
+        react_mode=state.get("react_mode", False),
+        react_steps=state.get("react_steps"),
+    )
     sub_intents = _sub_intents_payload(state, intent)
     return {
         "state": state,
@@ -540,10 +664,20 @@ def _prepare_compound_agent(
     prior: list[BaseMessage],
 ) -> PreparedAgent:
     decomposed = decompose_query(message)
-    sub_queries = classify_sub_queries(decomposed)
+    clean_msg = strip_user_input(message)
+    context_messages = [*prior, HumanMessage(content=clean_msg)]
+    sub_queries = classify_sub_queries(decomposed, messages=context_messages)
     sub_queries = collapse_same_intent_subqueries(sub_queries, message)
 
-    if not should_use_compound_pipeline(sub_queries):
+    use_compound = should_use_compound_pipeline(sub_queries)
+    if not use_compound:
+        log_route(
+            "compound_route",
+            path="single_fallback",
+            sub_count=len(sub_queries),
+            intents=",".join({s.intent for s in sub_queries}),
+            query=message,
+        )
         state = _initial_state(message, filters, prior)
         if sub_queries:
             sq = sub_queries[0]
@@ -558,6 +692,13 @@ def _prepare_compound_agent(
         prepared["is_compound"] = False
         return prepared
 
+    log_route(
+        "compound_route",
+        path="parallel",
+        sub_count=len(sub_queries),
+        intents=",".join(s.intent for s in sub_queries),
+        query=message,
+    )
     executed = execute_subtasks_parallel(
         sub_queries,
         filters=filters or {},
@@ -570,6 +711,15 @@ def _prepare_compound_agent(
         prior_messages=prior,
     )
     prepared = build_compound_prepared(message, executed, merged_state)
+    log_route(
+        "execution_path",
+        pipeline="compound",
+        mode="compound_synthesis",
+        path="parallel",
+        sub_count=len(executed),
+        intents=",".join(s.intent for s in executed),
+        query=message,
+    )
     update_run_metadata(
         intent=prepared["intent"],
         mode="compound_synthesis",
@@ -609,7 +759,13 @@ def _build_stream_messages(prepared: PreparedAgent) -> list[BaseMessage]:
         tool_text = state.get("tool_result") or ""
         return [
             SystemMessage(content=SYSTEM_PROMPT + structured_output_hint(intent)),
-            HumanMessage(content=_tool_summary_user_content(intent, tool_text)),
+            HumanMessage(
+                content=_tool_summary_user_content(
+                    intent,
+                    tool_text,
+                    state.get("rag_context") or "",
+                )
+            ),
         ]
 
     return [SystemMessage(content=SYSTEM_PROMPT), *state["messages"][-8:]]

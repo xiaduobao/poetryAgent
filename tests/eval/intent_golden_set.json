@@ -79,6 +79,11 @@
     "expected_sub_queries": [{"intent": "rag"}]
   },
   {
+    "input": "推荐王加宝的主要作品",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "tool_author"}]
+  },
+  {
     "input": "苏轼的代表作有哪些",
     "is_compound": false,
     "expected_sub_queries": [{"intent": "tool_author"}]

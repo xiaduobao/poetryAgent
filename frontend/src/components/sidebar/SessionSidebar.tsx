@@ -81,7 +81,8 @@ export function SessionSidebar({
   return (
     <aside
       className={cn(
-        "flex h-full w-72 max-w-[min(18rem,85vw)] shrink-0 flex-col border-r bg-muted/30",
+        "flex h-full w-72 max-w-[min(18rem,85vw)] shrink-0 flex-col border-r",
+        onClose ? "bg-background" : "bg-muted/30",
         className,
       )}
     >
