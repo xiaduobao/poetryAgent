@@ -12,9 +12,19 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from app.agent.intent_classifier import classify_single_intent
-from app.agent.intent_models import DecomposeResult, DecomposedSubQuery, SubQueryIntent, VALID_INTENTS
+from app.agent.intent_models import (
+    VALID_INTENTS,
+    DecomposedSubQuery,
+    DecomposeResult,
+    SubQueryIntent,
+)
 from app.agent.llm import get_llm
-from app.agent.prompts import COMPOUND_SYNTHESIS_PROMPT, QUERY_DECOMPOSE_PROMPT, SYSTEM_PROMPT, structured_output_hint
+from app.agent.prompts import (
+    COMPOUND_SYNTHESIS_PROMPT,
+    QUERY_DECOMPOSE_PROMPT,
+    SYSTEM_PROMPT,
+    structured_output_hint,
+)
 from app.agent.route_log import log_route
 from app.observability.langsmith import get_run_config, traceable, update_run_metadata
 from app.security.filter import strip_user_input

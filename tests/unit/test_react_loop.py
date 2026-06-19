@@ -3,13 +3,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.react_loop import (
+    run_limited_react,
     should_react_fallback,
     should_use_react_tool_loop,
-    run_limited_react,
 )
 
 

@@ -619,3 +619,19 @@ python scripts/download_models.py
 **答**：入口由 `COMPOUND_INTENT_ENABLED` 分叉 → 单路径 `classify_intent` 或复合 `decompose→classify_sub_queries`；核心分类均为 `classify_single_intent`（上下文增强 → 规则 → rule/suggested 融合 → LLM）；路由 `rag|tools|chat`；执行层 ReAct 兜底低置信/指代。日志：`grep '[agent-route]'`。
 
 **标签**：`other`
+
+---
+
+## 2026-06-19 · 修复前端 CI ESLint 错误
+
+**问**：修复 CI「Install and lint」步骤的 ESLint 报错。
+
+**答**：
+1. `button.tsx`：移除 `buttonVariants` 导出（仅组件文件导出组件）。
+2. `input.tsx` / `textarea.tsx`：空 interface 改为 `type` 别名。
+3. `AuthContext.tsx`：初始用户加载改为 effect 内 `.then()` 异步链，避免 effect 中同步 `setState`；`useAuth` 移至 `hooks/useAuth.ts`；Context 定义拆至 `contexts/auth-context.ts`。
+4. `useSessions.ts`：合并初始加载与 debounce 为一个 effect，首次 `setTimeout(..., 0)` 避免 effect 内同步 `setState`。
+
+验证：`cd frontend && npm run lint`
+
+**标签**：`other`

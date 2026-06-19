@@ -19,12 +19,11 @@ export function useSessions() {
   }, [])
 
   useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => refresh(query || undefined), 300)
+    debounceRef.current = setTimeout(
+      () => void refresh(query || undefined),
+      query ? 300 : 0,
+    )
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
