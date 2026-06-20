@@ -1236,3 +1236,51 @@ pre-commit run --all-files
 其他常见原因：用了 `git commit --no-verify`；只改了 `app/tests/frontend` 以外的文件（hook 按路径过滤，不会跑）；clone 后每台机器都要重新 `pre-commit install`（hook 不进 git 仓库）。
 
 **标签**：`other`
+
+---
+
+## 2026-06-20 · Human-in-the-loop 工具调用确认
+
+**问**：实现 human in loop 功能。
+
+**答**：在 Agent 准备调用工具前暂停，等待用户「允许执行 / 拒绝」后再继续生成回答。
+
+**开启**（`.env`）：
+```bash
+HUMAN_IN_LOOP_ENABLED=true
+```
+
+**触发**：消息中须包含关键词 `human_loop`（大小写不敏感），例如：
+```
+human_loop 介绍杜甫
+```
+Agent 会自动去掉该关键词后再处理；不含关键词时走正常流程，不会弹出确认。
+
+**流程**：用户提问（含 human_loop）→ 意图识别 → LLM 选出工具 → SSE `interrupt` 事件 → 前端展示 `HitlApprovalCard` → 用户确认 → `POST /api/v1/chat/resume` 流式继续。
+
+**SSE 新事件**：`interrupt`（含 `tool_calls` 列表）；`done` 在待确认时带 `awaiting_approval: true`。
+
+**涉及文件**：
+- `app/agent/human_loop.py` — pending 状态、序列化
+- `app/agent/graph.py` — `defer_tools`、`apply_hitl_tool_decision`
+- `app/api/routes.py` — `/chat/resume` 端点
+- `frontend/src/components/chat/HitlApprovalCard.tsx` — 确认 UI
+
+**说明**：仅对 legacy 单轮工具路径生效（高置信度 tool 意图）；ReAct 多轮路径暂不中断。pending 状态存内存，TTL 1 小时；多实例部署需后续接 Redis。
+
+**标签**：`config` `other`
+
+---
+
+## 2026-06-20 · HITL 改为关键词触发
+
+**问**：不每次都执行 human_loop，消息包含 `human_loop` 再执行。
+
+**答**：HITL 需同时满足：`HUMAN_IN_LOOP_ENABLED=true` 且消息含 `human_loop`。触发词会从消息中剥离后再交给 Agent。
+
+```
+human_loop 介绍杜甫   → HITL 确认
+介绍杜甫             → 直接执行工具
+```
+
+**标签**：`config` `other`

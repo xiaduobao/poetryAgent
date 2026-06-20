@@ -8,15 +8,24 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.graph import (
+    apply_hitl_tool_decision,
     commit_agent_state,
     prepare_agent,
     run_agent,
     stream_final_answer,
 )
+from app.agent.human_loop import (
+    build_interrupt_payload,
+    deserialize_prepared,
+    get_pending,
+    pop_pending,
+    save_pending,
+)
 from app.agent.sources import build_sources_from_prepared
 from app.api.schemas import (
     ChatRequest,
     ChatResponse,
+    HitlResumeRequest,
     RAGRequest,
     RAGResponse,
     ToolAllusionRequest,
@@ -92,6 +101,8 @@ def _sse(event: str, data: dict) -> str:
 
 
 def _status_phase(prepared_mode: str, intent: str, is_compound: bool = False) -> str:
+    if prepared_mode == "hitl_tool_approval":
+        return "awaiting_approval"
     if is_compound and prepared_mode == "compound_synthesis":
         return "executing"
     if prepared_mode == "compound_synthesis":
@@ -158,6 +169,132 @@ async def _traced_run_agent(
         return await run_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
 
 
+async def _resume_hitl_stream(
+    thread_id: str,
+    action: str,
+    meta: dict,
+) -> AsyncIterator[tuple[str, object]]:
+    pending = pop_pending(thread_id)
+    if not pending:
+        raise HTTPException(status_code=404, detail="无待确认的 Agent 任务或已过期")
+
+    prepared = deserialize_prepared(pending["prepared"])
+    user_message = pending["prepared"].get("user_message", "")
+
+    update_run_metadata(
+        **meta,
+        session_id=thread_id,
+        stream=True,
+        endpoint="/api/v1/chat/resume",
+        hitl_action=action,
+    )
+    with trace_session(thread_id):
+        yield ("status", {"phase": "tooling" if action == "approve" else "generating"})
+        prepared = apply_hitl_tool_decision(prepared, action)
+        yield ("prepared", prepared)
+        sources = build_sources_from_prepared(prepared)
+        if sources:
+            yield ("sources", {"sources": sources})
+        yield ("status", {"phase": "generating"})
+        async for token in stream_final_answer(prepared):
+            yield ("token", token)
+        yield ("resume_meta", {"user_message": user_message, "prepared": prepared, "sources": sources})
+
+
+@router.post("/chat/resume")
+@limiter.limit(lambda: get_settings().rate_limit_chat)
+async def chat_resume(
+    request: Request,
+    req: HitlResumeRequest,
+    user: User = Depends(require_chat_quota),
+) -> StreamingResponse:
+    thread_id = req.session_id
+    meta = _trace_ctx(request, user)
+
+    factory = get_session_factory()
+    async with factory() as db_init:
+        session = await crud.get_session(db_init, thread_id, user_id=user.id)
+        if not session:
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+        pending = get_pending(thread_id)
+        if not pending:
+            raise HTTPException(status_code=404, detail="无待确认的 Agent 任务或已过期")
+        await db_init.commit()
+
+    async def event_generator() -> AsyncIterator[str]:
+        full_answer = ""
+        intent = ""
+        sources: list = []
+        assistant_msg_id = ""
+        prepared = None
+        user_message = ""
+        try:
+            async for kind, value in _resume_hitl_stream(thread_id, req.action, meta):
+                if kind == "status":
+                    yield _sse("status", value)
+                elif kind == "prepared":
+                    prepared = value
+                    intent = prepared["intent"]
+                elif kind == "sources":
+                    yield _sse("sources", value)
+                elif kind == "token":
+                    token = str(value)
+                    full_answer += token
+                    yield _sse("token", {"content": token})
+                elif kind == "resume_meta":
+                    user_message = value.get("user_message", "")
+                    prepared = value.get("prepared")
+                    sources = value.get("sources") or []
+
+            if prepared is None:
+                raise RuntimeError("HITL resume did not complete")
+
+            await commit_agent_state(thread_id, user_message, full_answer, prepared)
+
+            factory = get_session_factory()
+            async with factory() as db2:
+                msg = await crud.add_message(
+                    db2, thread_id, user.id, "assistant", full_answer,
+                    intent=intent, sources=sources or None,
+                )
+                tokens_used = int((prepared or {}).get("token_usage") or 0)
+                await crud.record_usage(
+                    db2,
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                    action="chat",
+                    tokens=tokens_used,
+                )
+                record_llm_tokens("chat", tokens_used)
+                await db2.commit()
+                assistant_msg_id = msg.id if msg else ""
+
+            yield _sse("done", {
+                "session_id": thread_id,
+                "intent": intent,
+                "message_id": assistant_msg_id,
+                "sources": sources,
+                "sub_intents": (prepared or {}).get("sub_intents"),
+                "is_compound": bool((prepared or {}).get("is_compound")),
+                "hitl_resumed": True,
+            })
+        except HTTPException as e:
+            yield _sse("error", {"detail": e.detail})
+        except Exception as e:
+            logger.exception("HITL resume error")
+            yield _sse("error", {"detail": str(e)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @traceable(run_type="chain", name="chat_request")
 async def _traced_stream_chat(
     message: str,
@@ -180,6 +317,21 @@ async def _traced_stream_chat(
         else:
             yield ("status", {"phase": "classifying"})
         prepared = await prepare_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
+        if prepared.get("mode") == "hitl_tool_approval":
+            hitl = prepared.get("hitl") or {}
+            tool_calls = hitl.get("tool_calls") or []
+            save_pending(
+                thread_id,
+                prepared,
+                user_message=message,
+                tool_calls=tool_calls,
+            )
+            yield ("status", {"phase": "awaiting_approval"})
+            yield (
+                "interrupt",
+                build_interrupt_payload(thread_id, prepared, tool_calls),
+            )
+            return
         yield ("prepared", prepared)
         sub_intents = prepared.get("sub_intents") or []
         if len(sub_intents) > 1 and prepared.get("is_compound"):
@@ -225,6 +377,17 @@ async def chat(
     except Exception as e:
         logger.exception("agent error")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if result.get("hitl"):
+        preview = (result.get("rag_context") or "")[:500] or None
+        return ChatResponse(
+            answer="",
+            intent=result.get("intent", ""),
+            thread_id=thread_id,
+            session_id=thread_id,
+            rag_context_preview=preview,
+            hitl=result.get("hitl"),
+        )
 
     tokens_used = int(result.get("tokens_used") or 0)
     factory = get_session_factory()
@@ -311,6 +474,15 @@ async def chat_stream(
                     yield _sse("status", value)
                 elif kind == "subtasks":
                     yield _sse("subtasks", value)
+                elif kind == "interrupt":
+                    yield _sse("interrupt", value)
+                    yield _sse("done", {
+                        "session_id": thread_id,
+                        "intent": value.get("intent", ""),
+                        "hitl": True,
+                        "awaiting_approval": True,
+                    })
+                    return
                 elif kind == "prepared":
                     prepared = value
                     intent = prepared["intent"]

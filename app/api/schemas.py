@@ -1,6 +1,6 @@
 """API 请求/响应模型。"""
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -29,6 +29,18 @@ class ChatResponse(BaseModel):
     thread_id: str = "default"
     session_id: str | None = None
     rag_context_preview: str | None = None
+    hitl: dict[str, Any] | None = Field(
+        default=None,
+        description="Human-in-the-loop 中断信息（需用户确认后继续）",
+    )
+
+
+class HitlResumeRequest(BaseModel):
+    session_id: str = Field(..., min_length=1)
+    action: Literal["approve", "reject"] = Field(
+        ...,
+        description="approve=执行工具；reject=跳过工具",
+    )
 
 
 class MessageOut(BaseModel):

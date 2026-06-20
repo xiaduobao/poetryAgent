@@ -73,10 +73,11 @@ class AgentState(TypedDict):
 class PreparedAgent(TypedDict):
     state: AgentState
     intent: str
-    mode: Literal["rag", "tool_summary", "chat", "compound_synthesis"]
+    mode: Literal["rag", "tool_summary", "chat", "compound_synthesis", "hitl_tool_approval"]
     token_usage: NotRequired[int]
     sub_intents: NotRequired[list[dict]]
     is_compound: NotRequired[bool]
+    hitl: NotRequired[dict]
 
 
 # ---------- Nodes ----------
@@ -533,6 +534,9 @@ async def prepare_agent(
     filters: dict | None = None,
 ) -> PreparedAgent:
     """运行意图识别与检索/工具阶段，返回待流式生成的状态。"""
+    from app.agent.human_loop import prepare_agent_message
+
+    agent_message, hitl_requested = prepare_agent_message(message)
     prior = await _prior_messages(thread_id)
     compound_on = get_settings().compound_intent_enabled
     log_route(
@@ -540,16 +544,19 @@ async def prepare_agent(
         thread_id=thread_id,
         pipeline="compound" if compound_on else "single",
         prior_messages=len(prior),
-        query=message,
+        query=agent_message,
+        hitl_requested=hitl_requested,
     )
     if compound_on:
-        return _prepare_compound_agent(message, thread_id, filters, prior)
+        return _prepare_compound_agent(
+            agent_message, thread_id, filters, prior, hitl_requested=hitl_requested
+        )
 
-    state = _initial_state(message, filters, prior)
-    return _prepare_single_agent(state)
+    state = _initial_state(agent_message, filters, prior)
+    return _prepare_single_agent(state, hitl_requested=hitl_requested)
 
 
-def _prepare_tool_path(state: AgentState) -> AgentState:
+def _prepare_tool_path(state: AgentState, *, defer_tools: bool = False) -> AgentState:
     """工具意图：高置信度 legacy 单轮，低置信度/指代性提问 ReAct 多轮。"""
     settings = get_settings()
     intent = state.get("intent", "chat")
@@ -581,6 +588,8 @@ def _prepare_tool_path(state: AgentState) -> AgentState:
     state = prepare_tool_call(state)
     last = state["messages"][-1]
     if hasattr(last, "tool_calls") and last.tool_calls:
+        if defer_tools:
+            return state
         tool_msgs = _run_tools(state)
         state = {**state, "messages": state["messages"] + tool_msgs}
     tool_msgs = [m for m in state["messages"] if m.type == "tool"]
@@ -588,7 +597,37 @@ def _prepare_tool_path(state: AgentState) -> AgentState:
     return state
 
 
-def _prepare_single_agent(state: AgentState) -> PreparedAgent:
+def _pending_tool_calls(state: AgentState) -> list:
+    for m in reversed(state.get("messages") or []):
+        if isinstance(m, AIMessage) and m.tool_calls:
+            return list(m.tool_calls)
+    return []
+
+
+def apply_hitl_tool_decision(prepared: PreparedAgent, action: str) -> PreparedAgent:
+    """根据用户 approve/reject 继续或跳过工具执行。"""
+    state = prepared["state"]
+    if action == "reject":
+        return {
+            **prepared,
+            "state": {**state, "tool_result": "用户已拒绝工具调用。"},
+            "mode": "tool_summary",
+        }
+
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        tool_msgs = _run_tools(state)
+        state = {**state, "messages": state["messages"] + tool_msgs}
+    tool_msgs = [m for m in state["messages"] if m.type == "tool"]
+    tool_text = "\n".join(getattr(m, "content", str(m)) for m in tool_msgs)
+    return {
+        **prepared,
+        "state": {**state, "tool_result": tool_text},
+        "mode": "tool_summary",
+    }
+
+
+def _prepare_single_agent(state: AgentState, *, hitl_requested: bool = False) -> PreparedAgent:
     settings = get_settings()
     if not state.get("intent"):
         state = classify_intent(state)
@@ -603,7 +642,7 @@ def _prepare_single_agent(state: AgentState) -> PreparedAgent:
     source = state.get("intent_source", "rule")
     query = _last_user_text(state)
 
-    mode: Literal["rag", "tool_summary", "chat", "compound_synthesis"]
+    mode: Literal["rag", "tool_summary", "chat", "compound_synthesis", "hitl_tool_approval"]
     exec_path: str
 
     if settings.react_enabled and should_react_fallback(source, confidence):
@@ -621,7 +660,44 @@ def _prepare_single_agent(state: AgentState) -> PreparedAgent:
         mode = "rag"
         exec_path = "rag_retrieve"
     elif intent.startswith("tool_"):
-        state = _prepare_tool_path(state)
+        defer = hitl_requested
+        state = _prepare_tool_path(state, defer_tools=defer)
+        tool_calls = _pending_tool_calls(state)
+        if defer and tool_calls:
+            from app.agent.human_loop import format_tool_calls
+
+            mode = "hitl_tool_approval"
+            exec_path = "hitl_tool_approval"
+            prepared_hitl = format_tool_calls(tool_calls)
+            sub_intents = _sub_intents_payload(state, intent)
+            log_route(
+                "execution_path",
+                pipeline="single",
+                intent=intent,
+                source=source,
+                confidence=confidence,
+                path=exec_path,
+                mode=mode,
+                tool_count=len(prepared_hitl),
+                query=query,
+            )
+            update_run_metadata(
+                intent=intent,
+                mode=mode,
+                filters=state.get("filters") or None,
+                hitl=True,
+            )
+            return {
+                "state": state,
+                "intent": intent,
+                "mode": mode,
+                "is_compound": len(sub_intents) > 1,
+                "sub_intents": sub_intents,
+                "hitl": {
+                    "type": "tool_approval",
+                    "tool_calls": prepared_hitl,
+                },
+            }
         mode = "tool_summary"
         exec_path = "tool_path"
     else:
@@ -662,6 +738,8 @@ def _prepare_compound_agent(
     thread_id: str,
     filters: dict | None,
     prior: list[BaseMessage],
+    *,
+    hitl_requested: bool = False,
 ) -> PreparedAgent:
     decomposed = decompose_query(message)
     clean_msg = strip_user_input(message)
@@ -687,7 +765,7 @@ def _prepare_compound_agent(
                 "primary_intent": sq.intent,
                 "sub_queries": [sq.model_dump()],
             }
-        prepared = _prepare_single_agent(state)
+        prepared = _prepare_single_agent(state, hitl_requested=hitl_requested)
         prepared["sub_intents"] = unique_sub_intents_for_display(sub_queries)
         prepared["is_compound"] = False
         return prepared
@@ -875,6 +953,30 @@ async def run_agent(
     filters: dict | None = None,
 ) -> dict:
     prepared = await prepare_agent(message, thread_id=thread_id, filters=filters)
+    if prepared.get("mode") == "hitl_tool_approval":
+        from app.agent.human_loop import (
+            build_interrupt_payload,
+            save_pending,
+        )
+
+        hitl = prepared.get("hitl") or {}
+        tool_calls = hitl.get("tool_calls") or []
+        save_pending(
+            thread_id,
+            prepared,
+            user_message=message,
+            tool_calls=tool_calls,
+        )
+        state = prepared["state"]
+        return {
+            "answer": "",
+            "intent": prepared["intent"],
+            "rag_context": state.get("rag_context", ""),
+            "tool_result": state.get("tool_result", ""),
+            "sources": build_sources_from_prepared(prepared),
+            "tokens_used": 0,
+            "hitl": build_interrupt_payload(thread_id, prepared, tool_calls),
+        }
     answer, tokens_used = _collect_stream(prepared)
     await commit_agent_state(thread_id, message, answer, prepared)
     state = prepared["state"]

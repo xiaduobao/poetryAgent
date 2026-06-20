@@ -2,16 +2,21 @@ import { useEffect, useMemo, useRef } from "react"
 import { MessageBubble } from "./MessageBubble"
 import { EmptyState } from "./EmptyState"
 import type { PromptExample } from "@/lib/promptExamples"
-import type { Message, StreamPhase } from "@/types"
+import type { HitlInterrupt, Message, StreamPhase } from "@/types"
 import { PHASE_LABELS } from "@/types"
 import { Button } from "@/components/ui/button"
 import { formatUserDisplay } from "@/lib/formatUserMessage"
+import { HitlApprovalCard } from "@/components/chat/HitlApprovalCard"
 
 interface MessageListProps {
   messages: Message[]
   streaming: boolean
   phase: StreamPhase
   error: string | null
+  hitlPending?: HitlInterrupt | null
+  hitlLoading?: boolean
+  onHitlApprove?: () => void
+  onHitlReject?: () => void
   onRetry: () => void
   onExampleClick: (example: PromptExample) => void
 }
@@ -21,6 +26,10 @@ export function MessageList({
   streaming,
   phase,
   error,
+  hitlPending,
+  hitlLoading,
+  onHitlApprove,
+  onHitlReject,
   onRetry,
   onExampleClick,
 }: MessageListProps) {
@@ -85,6 +94,14 @@ export function MessageList({
                 }
               />
             ))
+          )}
+          {hitlPending && onHitlApprove && onHitlReject && (
+            <HitlApprovalCard
+              interrupt={hitlPending}
+              loading={hitlLoading}
+              onApprove={onHitlApprove}
+              onReject={onHitlReject}
+            />
           )}
           <div ref={bottomRef} />
         </div>

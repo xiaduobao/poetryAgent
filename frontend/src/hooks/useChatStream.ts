@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react"
-import { streamChat } from "@/api/chat"
+import { resumeChatStream, streamChat } from "@/api/chat"
 import { api } from "@/api/client"
-import type { Message, StreamPhase } from "@/types"
+import type { HitlInterrupt, Message, StreamPhase } from "@/types"
 
 const MAX_LENGTH = 2000
 
@@ -26,20 +26,26 @@ export function useChatStream() {
   const [streaming, setStreaming] = useState(false)
   const [phase, setPhase] = useState<StreamPhase>("idle")
   const [error, setError] = useState<string | null>(null)
+  const [hitlPending, setHitlPending] = useState<HitlInterrupt | null>(null)
+  const [hitlLoading, setHitlLoading] = useState(false)
   const abortRef = useRef<(() => void) | null>(null)
   const pendingRetryRef = useRef<PendingRetry | null>(null)
+  const activeSessionRef = useRef<string | null>(null)
+  const pendingAssistantIdRef = useRef<string | null>(null)
 
   const loadSession = useCallback(async (sessionId: string) => {
     const detail = await api.getSession(sessionId)
     setMessages(detail.messages)
     setError(null)
     setPhase("idle")
+    setHitlPending(null)
   }, [])
 
   const clearMessages = useCallback(() => {
     setMessages([])
     setError(null)
     setPhase("idle")
+    setHitlPending(null)
   }, [])
 
   const stop = useCallback(() => {
@@ -57,7 +63,10 @@ export function useChatStream() {
 
       setError(null)
       setStreaming(true)
+      setHitlPending(null)
       setPhase(hasImage ? "describing" : "classifying")
+
+      activeSessionRef.current = sessionId
 
       const userMsg: Message = {
         id: `temp-user-${Date.now()}`,
@@ -74,13 +83,11 @@ export function useChatStream() {
       }
 
       setMessages((prev) => [...prev, userMsg, assistantMsg])
+      pendingAssistantIdRef.current = assistantId
       pendingRetryRef.current = null
 
-      const handle = streamChat(
-        sessionId,
-        trimmed,
-        {
-          onStatus: (p) => setPhase(p),
+      const streamCallbacks = {
+          onStatus: (p: StreamPhase) => setPhase(p),
           onSources: (sources) => {
             setMessages((prev) =>
               prev.map((m) =>
@@ -101,6 +108,10 @@ export function useChatStream() {
               ),
             )
           },
+          onInterrupt: (data: HitlInterrupt) => {
+            setHitlPending(data)
+            setPhase("awaiting_approval")
+          },
           onToken: (content) => {
             setMessages((prev) =>
               prev.map((m) =>
@@ -111,6 +122,11 @@ export function useChatStream() {
             )
           },
           onDone: (data) => {
+            if (data.awaiting_approval) {
+              setStreaming(false)
+              setPhase("awaiting_approval")
+              return
+            }
             setMessages((prev) =>
               prev.map((m) => {
                 if (m.id === assistantId) {
@@ -128,14 +144,21 @@ export function useChatStream() {
             )
             setStreaming(false)
             setPhase("idle")
+            setHitlPending(null)
           },
           onError: (detail) => {
             setError(detail)
             setStreaming(false)
             setPhase("error")
+            setHitlPending(null)
             pendingRetryRef.current = { text: trimmed, imageBase64 }
           },
-        },
+        }
+
+      const handle = streamChat(
+        sessionId,
+        trimmed,
+        streamCallbacks,
         undefined,
         imageBase64,
       )
@@ -163,14 +186,83 @@ export function useChatStream() {
     [sendMessage],
   )
 
+  const resumeHitl = useCallback(
+    async (sessionId: string | null, action: "approve" | "reject") => {
+      if (!sessionId || !hitlPending) return
+
+      const assistantId = pendingAssistantIdRef.current
+      if (!assistantId) return
+
+      setError(null)
+      setHitlLoading(true)
+      setStreaming(true)
+      setPhase(action === "approve" ? "tooling" : "generating")
+
+      const handle = resumeChatStream(sessionId, action, {
+        onStatus: (p) => setPhase(p),
+        onSources: (sources) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, sources } : m,
+            ),
+          )
+        },
+        onToken: (content) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: m.content + content }
+                : m,
+            ),
+          )
+        },
+        onDone: (data) => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id === assistantId) {
+                return {
+                  ...m,
+                  id: data.message_id || m.id,
+                  intent: data.intent,
+                  sub_intents: data.sub_intents,
+                  is_compound: data.is_compound,
+                  sources: data.sources ?? m.sources,
+                }
+              }
+              return m
+            }),
+          )
+          setStreaming(false)
+          setHitlLoading(false)
+          setHitlPending(null)
+          setPhase("idle")
+        },
+        onError: (detail) => {
+          setError(detail)
+          setStreaming(false)
+          setHitlLoading(false)
+          setPhase("error")
+        },
+      })
+
+      abortRef.current = handle.abort
+      await handle.promise
+      abortRef.current = null
+    },
+    [hitlPending],
+  )
+
   return {
     messages,
     streaming,
     phase,
     error,
+    hitlPending,
+    hitlLoading,
     loadSession,
     clearMessages,
     sendMessage,
+    resumeHitl,
     stop,
     retry,
     maxLength: MAX_LENGTH,

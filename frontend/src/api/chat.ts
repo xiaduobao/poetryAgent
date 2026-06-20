@@ -1,6 +1,6 @@
 import { clearTokens, getValidToken, refreshAccessToken } from "./client"
 import { isGuestSession } from "./auth-storage"
-import type { SourceRef, StreamPhase, SubIntent } from "../types"
+import type { SourceRef, StreamPhase, SubIntent, HitlInterrupt } from "../types"
 
 export interface StreamCallbacks {
   onStatus?: (phase: StreamPhase) => void
@@ -11,6 +11,7 @@ export interface StreamCallbacks {
     sub_intents: SubIntent[]
     is_compound?: boolean
   }) => void
+  onInterrupt?: (data: HitlInterrupt) => void
   onDone?: (data: {
     session_id: string
     intent: string
@@ -18,6 +19,8 @@ export interface StreamCallbacks {
     sources?: SourceRef[]
     sub_intents?: SubIntent[]
     is_compound?: boolean
+    awaiting_approval?: boolean
+    hitl_resumed?: boolean
   }) => void
   onError?: (detail: string) => void
 }
@@ -143,6 +146,110 @@ export function streamChat(
   }
 }
 
+async function fetchResumeStream(
+  sessionId: string,
+  action: "approve" | "reject",
+  callbacks: StreamCallbacks,
+  signal: AbortSignal,
+  retry = true,
+): Promise<Response | null> {
+  const token = await getValidToken()
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const res = await fetch("/api/v1/chat/resume", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ session_id: sessionId, action }),
+    signal,
+  })
+
+  if (res.status === 401 && retry) {
+    if (isGuestSession()) {
+      clearTokens()
+      callbacks.onError?.("游客会话已过期，请重新进入或注册登录")
+      return null
+    }
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      return fetchResumeStream(sessionId, action, callbacks, signal, false)
+    }
+    clearTokens()
+    callbacks.onError?.("登录已过期，请重新登录")
+    return null
+  }
+
+  return res
+}
+
+export function resumeChatStream(
+  sessionId: string,
+  action: "approve" | "reject",
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+): StreamHandle {
+  const controller = new AbortController()
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal
+
+  const promise = (async () => {
+    const res = await fetchResumeStream(
+      sessionId,
+      action,
+      callbacks,
+      combinedSignal,
+      true,
+    )
+    if (!res) return
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      const message =
+        err.detail ||
+        err.error ||
+        (res.status === 429 ? "请求过于频繁，请稍后再试" : `HTTP ${res.status}`)
+      callbacks.onError?.(message)
+      return
+    }
+
+    const reader = res.body?.getReader()
+    if (!reader) {
+      callbacks.onError?.("无法读取响应流")
+      return
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ""
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split("\n\n")
+      buffer = parts.pop() || ""
+
+      for (const part of parts) {
+        if (!part.trim()) continue
+        parseSSE(part, callbacks)
+      }
+    }
+
+    if (buffer.trim()) {
+      parseSSE(buffer, callbacks)
+    }
+  })().catch((err) => {
+    if (err.name === "AbortError") return
+    callbacks.onError?.(err.message || "网络错误")
+  })
+
+  return {
+    abort: () => controller.abort(),
+    promise,
+  }
+}
+
 function parseSSE(raw: string, callbacks: StreamCallbacks) {
   let event = "message"
   let data = ""
@@ -168,6 +275,9 @@ function parseSSE(raw: string, callbacks: StreamCallbacks) {
         break
       case "token":
         callbacks.onToken?.(parsed.content)
+        break
+      case "interrupt":
+        callbacks.onInterrupt?.(parsed)
         break
       case "done":
         callbacks.onDone?.(parsed)

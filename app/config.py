@@ -121,6 +121,9 @@ class Settings(BaseSettings):
     react_rag_as_tool_enabled: bool = True
     react_rag_max_searches: int = 2
 
+    # Human-in-the-loop：消息含 human_loop 时才触发（需 HUMAN_IN_LOOP_ENABLED=true）
+    human_in_loop_enabled: bool = False
+
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in ("production", "prod")

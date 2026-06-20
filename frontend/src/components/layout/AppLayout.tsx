@@ -28,9 +28,12 @@ export function AppLayout() {
     streaming,
     phase,
     error,
+    hitlPending,
+    hitlLoading,
     loadSession,
     clearMessages,
     sendMessage,
+    resumeHitl,
     stop,
     retry,
     maxLength,
@@ -197,6 +200,10 @@ export function AppLayout() {
           streaming={streaming}
           phase={phase}
           error={error}
+          hitlPending={hitlPending}
+          hitlLoading={hitlLoading}
+          onHitlApprove={() => resumeHitl(activeId, "approve")}
+          onHitlReject={() => resumeHitl(activeId, "reject")}
           onRetry={() => retry(activeId)}
           onExampleClick={handlePromptSelect}
         />
@@ -207,7 +214,7 @@ export function AppLayout() {
           onDraftChange={handleDraftChange}
           onSend={handleSend}
           onStop={stop}
-          streaming={streaming}
+          streaming={streaming && !hitlPending}
           maxLength={maxLength}
           suggestions={followUpSuggestions}
           imagePickHint={imagePickHint}
