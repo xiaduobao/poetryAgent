@@ -3,7 +3,7 @@ from functools import lru_cache
 
 from langchain_openai import ChatOpenAI
 
-from app.config import Settings, get_settings
+from app.config import get_settings
 
 
 def _dashscope_extra_body(model: str, enable_thinking: bool) -> dict | None:

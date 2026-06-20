@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent import checkpoint as cp_mod
 from app.config import get_settings
-from langgraph.checkpoint.memory import MemorySaver
 
 
 @pytest.fixture(autouse=True)

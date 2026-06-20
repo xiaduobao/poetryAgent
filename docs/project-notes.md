@@ -1091,3 +1091,148 @@ python scripts/download_models.py
 6. **验证**：容器内有 `RATE_LIMIT_STORAGE_URI` → 调 `/api/v1/chat` 16 次/分钟应 429 → `docker exec <redis> redis-cli -n 1 KEYS 'LIMITS:*'`。
 
 **标签**：`config` `deploy`
+
+---
+
+## 2026-06-20 · Redis URL 末尾 /1 含义
+
+**问**：`redis://localhost:6379/1` 里的数字 1 代表数据库吗？
+
+**答**：是，表示 Redis **逻辑库编号**（database index），默认 0～15。本项目：`REDIS_URL` 用 `/0`（Checkpoint 备胎）；`RATE_LIMIT_STORAGE_URI` 用 `/1`（限流）。同一实例、不同库数据隔离；查限流用 `redis-cli -n 1 KEYS 'LIMITS:*'`。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · Cursor 里无法跳转到方法实现
+
+**问**：Cursor 里无法用快捷键/点击方法名跳转到具体实现。
+
+**答**：
+1. **快捷键（macOS）**：`F12` 或 `Cmd+点击` → 跳转到定义；`Option+F12` → 内联预览；`Cmd+F12` → 跳转到实现。
+2. **常见原因**：未装语言扩展（Python / TypeScript）、Python 解释器未选、工作区只打开了子目录、依赖未安装、语言服务仍在索引。
+3. **本仓库建议**：
+   - 用 Cursor 打开**仓库根目录** `poetryAgent/`（不要只开 `frontend/`）。
+   - Python：安装 **Python** + **Pylance** 扩展 → `Cmd+Shift+P` → `Python: Select Interpreter` → 选项目 `.venv`。
+   - 前端：`cd frontend && npm install`，确保 `frontend/node_modules` 存在。
+   - 右下角语言服务状态应为就绪；若一直转圈，执行 `Developer: Reload Window`。
+4. **仍无效**：`Cmd+Shift+P` → `Go to Definition` 看是否绑定快捷键；检查是否误用 Vim 模式拦截点击。
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · Cursor 安装 Python / Pylance 扩展
+
+**问**：如何在 Cursor 里安装并启用 Python + Pylance，以便代码跳转。
+
+**答**：
+1. **打开扩展面板**：`Cmd+Shift+X`（或左侧方块图标）。
+2. **安装 Python**：搜索 `Python`，发布者 **Microsoft**，点 **Install**（扩展 ID：`ms-python.python`）。
+3. **安装 Pylance**：搜索 `Pylance`，发布者 **Microsoft**，点 **Install**（`ms-python.vscode-pylance`）。装 Python 扩展时通常会提示一并安装。
+4. **确认已启用**：扩展详情页按钮为 **Disable**（不是 Enable）；若显示 Enable，点一下启用。
+5. **Reload**：安装后点 **Reload Required**，或 `Cmd+Shift+P` → `Developer: Reload Window`。
+6. **验证**：打开 `.py` 文件，右下角应出现 Python 版本；`Cmd+Shift+P` → `Python: Select Interpreter` 可选解释器；对本地函数 `Cmd+点击` 应能跳转。
+7. **TypeScript**：Cursor 内置，打开 `.ts/.tsx` 右下角显示 `TypeScript` 即可；无需单独安装。
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · 确认语言扩展已安装并启用
+
+**问**：语言扩展未安装或未启用时如何检查？（Python 后端 + TypeScript 前端）
+
+**答**：
+1. **打开扩展面板**：`Cmd+Shift+X`。
+2. **Python 后端**（必装）：
+   - 搜索 `Python`（Microsoft，`ms-python.python`）→ 按钮应为 **Disable**（已启用）。
+   - 搜索 `Pylance`（Microsoft，`ms-python.vscode-pylance`）→ 同上。
+   - 若显示 **Enable**，点一下启用；若 **Install**，安装后 **Reload Window**。
+3. **TypeScript 前端**（一般内置）：
+   - 打开 `frontend/src` 下任意 `.tsx` 文件，右下角应显示 `TypeScript` 或版本号。
+   - 若显示错误或一直加载：`Cmd+Shift+P` → `TypeScript: Restart TS Server`。
+4. **快速验证**：Python 文件 `Cmd+点击` 本地函数能跳转；`.tsx` 文件 `Cmd+点击` 组件/import 能跳转。
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · Select Interpreter 列表为空
+
+**问**：`Python: Select Interpreter` 里没有可选项。
+
+**答**：
+1. **本项目已有 `.venv`**，路径：`/Users/wangjiabao/git/poetryAgent/.venv/bin/python`（Python 3.11.13）。
+2. **列表为空时手动指定**：`Cmd+Shift+P` → `Python: Select Interpreter` → 选 **Enter interpreter path...** → **Find...** → 选上面路径；或直接粘贴路径。
+3. **工作区已加** `.vscode/settings.json`，指定 `python.defaultInterpreterPath` 为 `${workspaceFolder}/.venv/bin/python`；Reload Window 后右下角应显示 `3.11.x ('.venv')`。
+4. **若仍无列表**：先确认 Python + Pylance 已安装并重载；或 `Cmd+Shift+P` → `Python: Clear Cache and Reload Window`。
+5. **`.venv` 损坏时重建**：
+   ```bash
+   cd /Users/wangjiabao/git/poetryAgent
+   python3.11 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · Cursor 里 Debug 启动项目
+
+**问**：如何在 Cursor 里 debug 启动？
+
+**答**：
+1. **前置**：Postgres + Redis 先起（`docker compose -f docker-compose.infra.yml up -d`）；`.env` 已配置；解释器选 `.venv`。
+2. **断点调试后端**：左侧 **Run and Debug**（或 `Cmd+Shift+D`）→ 选 **FastAPI 后端** → 绿三角 **Start Debugging**（`F5`）。访问 http://localhost:8000/docs 触发 API，断点会停。
+3. **热重载调试**：选 **FastAPI 后端 (热重载)**（改代码自动重启；断点偶发需 `subProcess` 支持）。
+4. **调试脚本**（如 `eval_rag.py`）：打开脚本 → 选 **Python: 当前脚本** 或 **RAG 评估** → `F5`。
+5. **配置位置**：`.vscode/launch.json`（uvicorn + debugpy，自动读 `.env`）。
+6. **前端联调**：另开终端 `cd frontend && npm run dev`（5173 代理到 8000）；前端 JS 断点用 Chrome DevTools，或装 **Debugger for Chrome** 扩展。
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · 修复 ruff check app tests
+
+**问**：fix Run ruff check app tests
+
+**答**：两处可自动修复的 lint 问题：
+1. `app/agent/llm.py`：移除未使用的 `Settings` 导入（F401）。
+2. `tests/unit/test_checkpoint.py`：按 isort 规则排序 import（`langgraph` 在 `app` 之前，I001）。
+
+```bash
+cd /Users/wangjiabao/git/poetryAgent
+.venv/bin/ruff check app tests --fix
+.venv/bin/ruff check app tests   # All checks passed!
+```
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · pre-commit 没有生效
+
+**问**：为什么 pre-commit 没有生效？
+
+**答**：根因是 **从未执行 `pre-commit install`**，`.git/hooks/` 里只有 `pre-commit.sample`，没有真正的 `pre-commit` hook，所以 `git commit` 不会触发检查。
+
+一次性安装（在项目根、已激活 `.venv`）：
+
+```bash
+cd /Users/wangjiabao/git/poetryAgent
+source .venv/bin/activate
+pip install pre-commit   # 已在 requirements.txt
+pre-commit install       # 写入 .git/hooks/pre-commit
+```
+
+验证：
+
+```bash
+pre-commit run --all-files
+```
+
+其他常见原因：用了 `git commit --no-verify`；只改了 `app/tests/frontend` 以外的文件（hook 按路径过滤，不会跑）；clone 后每台机器都要重新 `pre-commit install`（hook 不进 git 仓库）。
+
+**标签**：`other`
