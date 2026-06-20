@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -9,14 +10,40 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_checkpointer = None
-_checkpointer_ctx = None
+_checkpointer: Any = None
+_checkpointer_cm: Any = None
+_checkpointer_backend: str = ""
 
 
 def get_checkpointer():
-    global _checkpointer, _checkpointer_ctx
+    """返回已初始化的 checkpointer；未 setup 时降级为 MemorySaver。"""
     if _checkpointer is not None:
         return _checkpointer
+    logger.warning("Checkpointer not initialized; using in-memory fallback")
+    return MemorySaver()
+
+
+def checkpointer_backend() -> str:
+    return _checkpointer_backend or "memory"
+
+
+async def _close_checkpointer_cm() -> None:
+    global _checkpointer, _checkpointer_cm
+    if _checkpointer_cm is not None:
+        try:
+            await _checkpointer_cm.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning("Error closing checkpointer context: %s", e)
+    _checkpointer = None
+    _checkpointer_cm = None
+
+
+async def setup_checkpointer() -> None:
+    """在 FastAPI lifespan 启动时初始化 Postgres → Redis → MemorySaver。"""
+    global _checkpointer, _checkpointer_cm, _checkpointer_backend
+
+    if _checkpointer is not None:
+        return
 
     settings = get_settings()
     db_url = settings.database_url or ""
@@ -26,33 +53,45 @@ def get_checkpointer():
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
             conn_str = db_url.replace("postgresql+asyncpg://", "postgresql://")
-            _checkpointer_ctx = AsyncPostgresSaver.from_conn_string(conn_str)
-            _checkpointer = _checkpointer_ctx.__enter__()
+            _checkpointer_cm = AsyncPostgresSaver.from_conn_string(conn_str)
+            _checkpointer = await _checkpointer_cm.__aenter__()
+            await _checkpointer.setup()
+            _checkpointer_backend = "postgres"
             logger.info("Using Postgres checkpointer")
-            return _checkpointer
+            return
         except Exception as e:
-            logger.warning("Postgres checkpointer unavailable, using memory: %s", e)
+            logger.warning("Postgres checkpointer unavailable: %s", e)
+            await _close_checkpointer_cm()
+            _checkpointer_backend = ""
 
     if settings.redis_url:
         try:
             from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
-            _checkpointer_ctx = AsyncRedisSaver.from_conn_string(settings.redis_url)
-            _checkpointer = _checkpointer_ctx.__enter__()
+            _checkpointer_cm = AsyncRedisSaver.from_conn_string(settings.redis_url)
+            _checkpointer = await _checkpointer_cm.__aenter__()
+            await _checkpointer.setup()
+            _checkpointer_backend = "redis"
             logger.info("Using Redis checkpointer")
-            return _checkpointer
+            return
         except Exception as e:
-            logger.warning("Redis checkpointer unavailable, using memory: %s", e)
+            logger.warning("Redis checkpointer unavailable: %s", e)
+            await _close_checkpointer_cm()
+            _checkpointer_backend = ""
 
     _checkpointer = MemorySaver()
+    _checkpointer_backend = "memory"
     logger.info("Using in-memory checkpointer")
-    return _checkpointer
 
 
-async def setup_checkpointer() -> None:
-    cp = get_checkpointer()
-    if hasattr(cp, "setup"):
-        await cp.setup()
+async def shutdown_checkpointer() -> None:
+    """关闭 checkpointer 连接（lifespan 退出时调用）。"""
+    global _checkpointer_backend
+    backend = _checkpointer_backend
+    await _close_checkpointer_cm()
+    _checkpointer_backend = ""
+    if backend:
+        logger.info("Checkpointer (%s) closed.", backend)
 
 
 async def clear_thread_checkpoint(thread_id: str) -> None:

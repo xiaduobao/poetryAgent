@@ -31,10 +31,52 @@ _POEM_TITLE = re.compile(r"《.+?》")
 _FAMOUS_POEMS = ("静夜思", "登高", "念奴娇", "赤壁")
 _AUTHOR_HINT = re.compile(r"(诗人|作者|作家|词人)")
 _NAME_BEFORE_DE = re.compile(r"[\u4e00-\u9fff]{2,4}的(生平|代表作|风格|诗歌)")
+_WRITING_EXCLUDE = (
+    "创作背景",
+    "写作背景",
+    "历史背景",
+    "创作年代",
+    "创作过程",
+    "创作意图",
+    "什么背景",
+    "写于什么",
+    "作于什么",
+)
+_POEM_BACKGROUND_PHRASES = (
+    "创作背景",
+    "写作背景",
+    "历史背景",
+    "创作年代",
+    "创作过程",
+    "创作意图",
+)
+_POEM_BACKGROUND_QUERY = ("什么背景", "写于什么", "作于什么", "写于何时", "何时所作", "什么时候写")
+_POEM_CONTEXT_HINTS = ("这首诗", "这首", "此词", "此曲", "这篇")
 
 
 def _has_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(k in text for k in keywords)
+
+
+def _has_poem_context(text: str) -> bool:
+    return (
+        _POEM_TITLE.search(text) is not None
+        or _has_any(text, _POEM_CONTEXT_HINTS)
+        or _has_any(text, _FAMOUS_POEMS)
+        or _AUTHOR_HINT.search(text) is not None
+    )
+
+
+def _is_poem_background_query(text: str) -> bool:
+    if _has_any(text, _POEM_BACKGROUND_PHRASES):
+        return True
+    return _has_any(text, _POEM_BACKGROUND_QUERY) and _has_poem_context(text)
+
+
+def _is_writing_request(text: str) -> bool:
+    return _has_any(
+        text, ("写一首", "创作", "对联", "藏头", "填词", "仿写", "帮我写")
+    ) and not _has_any(text, _WRITING_EXCLUDE)
 
 
 def _build_rules() -> tuple[IntentRule, ...]:
@@ -47,10 +89,17 @@ def _build_rules() -> tuple[IntentRule, ...]:
             confidence=1.0,
         ),
         IntentRule(
+            "poem_background",
+            "rag",
+            96,
+            _is_poem_background_query,
+            confidence=0.92,
+        ),
+        IntentRule(
             "writing",
             "tool_writing",
             95,
-            lambda t: _has_any(t, ("写一首", "创作", "对联", "藏头", "填词", "仿写", "帮我写")),
+            _is_writing_request,
             confidence=0.95,
         ),
         IntentRule(

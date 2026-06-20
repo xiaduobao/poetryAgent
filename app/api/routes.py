@@ -140,7 +140,7 @@ async def _resolve_agent_message(req: ChatRequest) -> tuple[str, bool]:
 
 
 @traceable(run_type="chain", name="chat_request")
-def _traced_run_agent(
+async def _traced_run_agent(
     message: str,
     thread_id: str,
     filters: dict,
@@ -155,7 +155,7 @@ def _traced_run_agent(
         message_preview=truncate_input(message),
     )
     with trace_session(thread_id):
-        return run_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
+        return await run_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
 
 
 @traceable(run_type="chain", name="chat_request")
@@ -179,7 +179,7 @@ async def _traced_stream_chat(
             yield ("status", {"phase": "decomposing"})
         else:
             yield ("status", {"phase": "classifying"})
-        prepared = prepare_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
+        prepared = await prepare_agent(wrap_user_input(message), thread_id=thread_id, filters=filters)
         yield ("prepared", prepared)
         sub_intents = prepared.get("sub_intents") or []
         if len(sub_intents) > 1 and prepared.get("is_compound"):
@@ -221,7 +221,7 @@ async def chat(
     await db.commit()
 
     try:
-        result = _traced_run_agent(text, thread_id, filters, meta)
+        result = await _traced_run_agent(text, thread_id, filters, meta)
     except Exception as e:
         logger.exception("agent error")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -336,7 +336,7 @@ async def chat_stream(
             if prepared is None:
                 raise RuntimeError("agent prepare stage did not complete")
 
-            commit_agent_state(thread_id, text, full_answer, prepared)
+            await commit_agent_state(thread_id, text, full_answer, prepared)
 
             factory = get_session_factory()
             async with factory() as db2:

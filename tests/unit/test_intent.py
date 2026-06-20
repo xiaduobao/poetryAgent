@@ -47,6 +47,12 @@ def _state(message: str) -> dict:
         ("苏轼的代表作有哪些", "tool_author"),
         ("【看图创作】\n画面描述：远山含黛\n用户要求：写五言绝句", "tool_writing"),
         ("查找《春晓》的原文", "tool_lookup"),
+        ("这首诗的创作背景是什么", "rag"),
+        ("《登高》的创作背景", "rag"),
+        ("作者创作背景是什么", "rag"),
+        ("杜甫《春望》写于什么背景", "rag"),
+        ("帮我写一首关于春天的五言绝句", "tool_writing"),
+        ("帮我创作一首诗", "tool_writing"),
     ],
 )
 def test_classify_intent_rules(message: str, expected: str):
@@ -88,16 +94,21 @@ def test_classify_single_intent_llm_fallback():
         assert conf >= 0.5
 
 
-def test_prepare_agent_single_path(monkeypatch):
+@pytest.mark.asyncio
+async def test_prepare_agent_single_path(monkeypatch):
     monkeypatch.setenv("COMPOUND_INTENT_ENABLED", "false")
     from app.config import get_settings
 
     get_settings.cache_clear()
-    with patch("app.agent.graph._prior_messages", return_value=[]), patch(
+
+    async def _empty_prior(_thread_id: str):
+        return []
+
+    with patch("app.agent.graph._prior_messages", side_effect=_empty_prior), patch(
         "app.agent.graph.retrieve_rag",
         side_effect=lambda s: {**s, "rag_context": "ctx", "source_refs": []},
     ):
-        prepared = prepare_agent(wrap_user_input("请赏析《登高》"))
+        prepared = await prepare_agent(wrap_user_input("请赏析《登高》"))
     assert prepared["mode"] == "rag"
     assert prepared["intent"] == "rag"
     get_settings.cache_clear()

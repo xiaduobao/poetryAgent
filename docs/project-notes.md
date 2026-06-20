@@ -893,3 +893,201 @@ python scripts/download_models.py
 3. 本地/生产在 `.env` / `.env.prod` 增加：`REACT_LLM_MODEL=qwen-turbo`（或 `qwen-flash` 更快、略弱）。
 
 **标签**：`config`
+
+---
+
+## 2026-06-20 · 「创作背景」误识别为创作诗词
+
+**问**：用户问「这首诗的创作背景是什么」，意图识别会当成 `tool_writing`（创作诗词），如何解决？
+
+**答**：
+1. **根因**：`intent_rules.py` 的 `writing` 规则 priority 95，子串「创作」会命中，优先于 `rag`。
+2. **修复**：新增 `poem_background` 规则（priority 96 → `rag`）；`writing` 规则增加负向排除（创作背景、写作背景等）；LLM prompt 补充反例说明。
+3. **验证**：`pytest tests/unit/test_intent.py`；golden set 新增 3 条背景类用例。
+
+**标签**：`rag`
+
+---
+
+## 2026-06-20 · 大模型意图识别 prompt 怎么写
+
+**问**：当前项目大模型意图的 prompt 如何写的？
+
+**答**：
+1. **单意图分类**：`app/agent/prompts.py` 的 `INTENT_CLASSIFIER_PROMPT`，要求输出 JSON（intent/confidence/reasoning），枚举 9 类意图 + 反例。
+2. **复合问题拆解**：同文件 `QUERY_DECOMPOSE_PROMPT`，输出 is_compound + sub_queries（含 suggested_intent）。
+3. **调用**：`intent_classifier._llm_classify_intent()` 优先 `with_structured_output(IntentResult)`，失败则普通 invoke + JSON 解析；规则命中时不走 LLM。
+4. **前置**：分类前 `prepare_query_for_intent()` 会把「这首诗」等指代补全为具体诗题。
+
+**标签**：`rag`
+
+---
+
+## 2026-06-20 · 如何快速学习项目里的表
+
+**问**：如何快速学习这项目里面的表？
+
+**答**：
+1. **入口**：`app/db/models.py`（9 张 SQL 表 ORM 定义）；迁移 `alembic/versions/001_initial_schema.py`。
+2. **关系**：租户 `tenants` → 用户 `users` → 会话 `sessions` → 消息 `messages`；`refresh_tokens` / `subscriptions` / `usage_records` 围绕鉴权与配额。
+3. **非 SQL**：诗词向量在 `data/chroma_db/`（Chroma collection `poetry_corpus`）；语料是 `data/corpus/*.md`。
+4. **用法**：`app/db/crud.py` 看会话/消息；`app/auth/routes.py` 看注册登录；本地 `\dt` 连 `poetry_agent` 库查看实表。
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · Checkpoint 存在 Postgres 哪张表
+
+**问**：Checkpoint 在 postgres 保存什么表里面？
+
+**答**：
+1. **不在** Alembic 的 9 张业务表（`sessions`/`messages` 等）里；由 LangGraph `AsyncPostgresSaver.setup()` 自动建表。
+2. **四张表**（public schema）：`checkpoints`（状态快照）、`checkpoint_blobs`（大二进制）、`checkpoint_writes`（中间写入）、`checkpoint_migrations`（schema 版本）。
+3. **关联键**：`thread_id` = 聊天 `session_id`；启动时 `app/main.py` → `setup_checkpointer()`。
+4. **降级**：Postgres 不可用 → Redis；再不行 → 进程内 MemorySaver（本地 SQLite 开发常见）。
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · 为什么 Postgres 里看不到 checkpoint 表
+
+**问**：看不到 checkpoint 这几张表？
+
+**答**：
+1. 实测 `poetry_agent` 库只有 Alembic 10 张业务表，**无** `checkpoints` 等表。
+2. **原因**：`app/agent/checkpoint.py` 用同步 `__enter__()` 打开 `AsyncPostgresSaver.from_conn_string()`（异步 context manager），初始化失败 → 日志 `Postgres checkpointer unavailable` → 降级 **InMemorySaver**，故从未执行 `setup()` 建表。
+3. **验证**：启动日志应出现 `Using Postgres checkpointer`；`\dt checkpoint*` 才有表。当前实际 Checkpoint 在**进程内存**，重启丢失。
+4. **修复方向**：改为 `async with AsyncPostgresSaver.from_conn_string(...)` 或在 lifespan 里正确持有连接后再 `await setup()`。
+
+**标签**：`other`
+
+---
+
+## 2026-06-20 · 修复 LangGraph Checkpoint 未持久化
+
+**问**：Postgres 和 Redis 都没有 checkpoint 数据，帮忙修复。
+
+**答**：
+1. **根因**：`checkpoint.py` 对 `AsyncPostgresSaver`/`AsyncRedisSaver` 误用同步 `__enter__()`，降级为 `InMemorySaver`。
+2. **修复**：`setup_checkpointer()` 改用 `await __aenter__()` + `await setup()`；`main.py` lifespan 退出时 `shutdown_checkpointer()`。
+3. **验证**：重启后日志 `Using Postgres checkpointer`；`\dt checkpoint*` 可见 4 张表；`pytest tests/unit/test_checkpoint.py`。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · AsyncPostgresSaver 同步调用报错
+
+**问**：`/chat/stream` 报错 `InvalidStateError: Synchronous calls to AsyncPostgresSaver are only allowed from a different thread`。
+
+**答**：
+1. **根因**：Checkpoint 已切到 `AsyncPostgresSaver`，但 `_prior_messages` / `commit_agent_state` 仍用同步 `graph.get_state()` / `graph.update_state()`，在 FastAPI 主事件循环线程里会抛错。
+2. **修复**：改为 async 接口——`await graph.aget_state()`、`await graph.aupdate_state()`；`prepare_agent`、`run_agent`、`commit_agent_state` 及 routes 调用处均 `await`。
+3. **验证**：重启后流式对话不再在 `prepare_agent` 阶段失败；`pytest tests/unit/test_intent.py::test_prepare_agent_single_path`。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · commit_agent_state Ambiguous update
+
+**问**：流式对话生成完成后报错 `InvalidUpdateError: Ambiguous update, specify as_node`。
+
+**答**：
+1. **根因**：`aupdate_state` 在无历史 checkpoint 或无法推断最后节点时，必须显式传 `as_node`；`commit_agent_state` 未指定。
+2. **修复**：按 `prepared["mode"]` 映射终端节点：`rag`→`generate_rag`、`tool_summary`→`summarize_tools`、`chat`→`chat`、`compound_synthesis`→`merge_subtasks`。
+3. **验证**：`pytest tests/unit/test_checkpoint.py::test_commit_agent_state_sets_as_node`。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · Checkpoint 表何时有数据
+
+**问**：为什么 Checkpoint 相关表都没有数据，什么时候会写入？
+
+**答**：
+1. **建表时机**：启动时 `setup_checkpointer()` → `await setup()`（仅 Postgres/Redis 后端）；降级 MemorySaver 则**不写库**。
+2. **写入时机**：仅在一轮对话**完整成功**后 `commit_agent_state()`——`/chat/stream` 流式结束、`/chat` 非流式返回前；`prepare_agent` 只读不写。
+3. **无数据常见原因**：日志是 `Using in-memory checkpointer`；此前 async/as_node 报错导致 commit 失败；流式中途 error 未走到 commit；删会话会 `clear_thread_checkpoint`。
+4. **与 messages 表区别**：`messages` 每轮都写（UI 历史）；checkpoint 存 Agent 多轮记忆（intent、rag_context 等），commit 成功才有行。
+5. **自检**：启动日志 `Using Postgres checkpointer` → 完成一轮对话 → `SELECT thread_id, checkpoint_id FROM checkpoints;`（`thread_id` = `session_id`）。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · Checkpoint 有什么用、如何理解表和数据
+
+**问**：Checkpoint 有什么用？如何理解表和数据？
+
+**答**：
+1. **用途**：LangGraph Agent 的**多轮工作记忆**（非前端聊天记录）。`prepare_agent` 读 `_prior_messages`；意图指代消解（「这首诗」）、RAG 历史、chat 最近 8 轮都依赖它。
+2. **与 messages 表**：`messages` 给 UI/审计；checkpoint 给 Agent 推理。`thread_id` = `session_id`。
+3. **四张表**：`checkpoint_migrations`（版本）；`checkpoints`（快照索引+元数据，`parent_checkpoint_id` 链式）；`checkpoint_blobs`（messages 等 channel 序列化）；`checkpoint_writes`（图执行中间写入，本项目手动 commit 较少）。
+4. **读数据**：按 `thread_id` 查 `checkpoints` 最新 `checkpoint_id`；业务字段在 blob 反序列化后的 `messages`/`intent`/`rag_context` 等（`commit_agent_state` 写入）。
+5. **心智模型**：每轮成功对话追加一个快照节点，下一轮从最新快照恢复上下文。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · Checkpoint 为何 Postgres → Redis → Memory
+
+**问**：为什么要设计先 Postgres 再 Redis 最后 sessions_db？
+
+**答**：
+1. **纠正**：第三级不是 `sessions`/`messages` 业务表，而是进程内 **MemorySaver**；会话表与 Checkpoint **并行存在**，不参与降级链。
+2. **Postgres 优先**：与 `DATABASE_URL` 同库、持久化、可 SQL 排查；生产默认。
+3. **Redis 次选**：PG checkpointer 初始化失败时（如缺 libpq）可复用已有 Redis（限流同栈）；读写快，持久性取决于 AOF/RDB。
+4. **Memory 兜底**：零依赖本地开发；重启丢 Agent 记忆，但 `messages` 表 UI 历史仍在。
+5. **设计本质**：可用性降级链，不是把 checkpoint 写进 sessions 表——业务库与 LangGraph 状态存储职责分离。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · 如何查看 Redis 里的限流与 Checkpoint 数据
+
+**问**：生产已有 Redis（`RATE_LIMIT_STORAGE_URI`），如何查看数据？
+
+**答**：
+1. **同一 Redis 实例、两个逻辑库**：`REDIS_URL` → **db0**（Checkpoint 备胎）；`RATE_LIMIT_STORAGE_URI` → **db1**（限流）。`.env.example` 默认 `6379/0` 与 `6379/1`。
+2. **限流（db1）**：`redis-cli -n 1 KEYS 'LIMITS:*'`；key 形如 `LIMITS:{user:<id>|ip:<ip>}/<路由>`；`GET` 看当前窗口计数（整数）。
+3. **Checkpoint（db0，仅 PG 失败降级时）**：key 前缀 `checkpoint:` / `checkpoint_write:`，存 RedisJSON+RediSearch，不宜手解；启动日志 `Using Redis checkpointer` 才有数据。
+4. **本地**：`redis-cli -n 1 INFO keyspace`；**ECS**：`docker exec -it <redis容器> redis-cli -n 1`。
+5. **PG 正常时**：Checkpoint 在 Postgres `checkpoints` 表；Redis db0 通常空，db1 有限流 key。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · 生产 Redis db1 无限流 key（容器无 RATE_LIMIT 环境变量）
+
+**问**：`docker exec ... env | grep RATE_LIMIT` 为空，Redis db1 无 `LIMITS:*`。
+
+**答**：
+1. **根因**：`RATE_LIMIT_STORAGE_URI` 未注入 App 容器 → slowapi 用**进程内存**限流，Redis db1 永远空；`grep` 为空也说明未走 compose 的 `environment` 注入或查错容器。
+2. **确认容器**：`docker ps` 找 poetry-agent 镜像的容器，再 `env | grep -E 'REDIS|DATABASE|RATE_LIMIT'`。
+3. **修复**：ECS 上 `docker-compose.prod.yml` 的 `poetry-agent.environment` 需含 `RATE_LIMIT_STORAGE_URI=redis://redis:6379/1`；或写入 `.env.prod` 后 `remote-compose.sh recreate`。
+4. **验证**：`env | grep RATE_LIMIT` 有输出 → 发一条聊天 → `redis-cli -n 1 KEYS 'LIMITS:*'`（注意大写）。
+
+**标签**：`config`
+
+---
+
+## 2026-06-20 · Redis 限流未生效：完整排查链
+
+**问**：分析一下 redis 限流为什么没有生效。
+
+**答**：
+1. **机制**：slowapi `Limiter`（`app/security/rate_limit.py`）仅在 `RATE_LIMIT_STORAGE_URI` 非空时用 Redis；否则**进程内存**计数，Redis db1 永远无 `LIMITS:*`。
+2. **已确认根因（生产）**：App 容器 `env | grep RATE_LIMIT` 为空 → 未注入 `RATE_LIMIT_STORAGE_URI`；限流可能在单进程内仍生效，但 Redis 看不到。
+3. **配置缺口**：`.env.prod.example` 只有 `RATE_LIMIT_*` 开关/阈值，**不含** `RATE_LIMIT_STORAGE_URI`；生产依赖 `docker-compose.prod.yml` 的 `environment` 注入 `redis://redis:6379/1`。
+4. **部署陷阱**：`deploy.sh --pull` 只 pull 镜像、**不同步** compose；ECS 若仍是旧 compose 或未 `force-recreate`，容器 env 不会更新。需全量 deploy、`--env-only`，或 ECS 上 `remote-compose.sh recreate`。
+5. **查错库**：限流在 **db1**；`REDIS_URL` 的 db0 是 Checkpoint 备胎，PG 正常时 db0 通常空。
+6. **验证**：容器内有 `RATE_LIMIT_STORAGE_URI` → 调 `/api/v1/chat` 16 次/分钟应 429 → `docker exec <redis> redis-cli -n 1 KEYS 'LIMITS:*'`。
+
+**标签**：`config` `deploy`

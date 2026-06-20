@@ -470,10 +470,10 @@ def _initial_state(
     }
 
 
-def _prior_messages(thread_id: str) -> list[BaseMessage]:
+async def _prior_messages(thread_id: str) -> list[BaseMessage]:
     graph = get_agent_graph()
     config = {"configurable": {"thread_id": thread_id}}
-    snap = graph.get_state(config)
+    snap = await graph.aget_state(config)
     if snap and snap.values:
         return list(snap.values.get("messages", []))
     return []
@@ -527,13 +527,13 @@ def _sub_intents_payload(state: AgentState, intent: str) -> list[dict]:
 
 
 @traceable(run_type="chain", name="prepare_agent")
-def prepare_agent(
+async def prepare_agent(
     message: str,
     thread_id: str = "default",
     filters: dict | None = None,
 ) -> PreparedAgent:
     """运行意图识别与检索/工具阶段，返回待流式生成的状态。"""
-    prior = _prior_messages(thread_id)
+    prior = await _prior_messages(thread_id)
     compound_on = get_settings().compound_intent_enabled
     log_route(
         "prepare_start",
@@ -822,7 +822,7 @@ def _collect_stream(prepared: PreparedAgent) -> tuple[str, int]:
     return content, tokens
 
 
-def commit_agent_state(
+async def commit_agent_state(
     thread_id: str,
     user_message: str,
     assistant_content: str,
@@ -832,7 +832,7 @@ def commit_agent_state(
     graph = get_agent_graph()
     config = {"configurable": {"thread_id": thread_id}}
     state = prepared["state"]
-    graph.update_state(
+    await graph.aupdate_state(
         config,
         {
             "messages": [
@@ -849,6 +849,7 @@ def commit_agent_state(
             "primary_intent": state.get("primary_intent", prepared.get("intent", "")),
             "original_query": state.get("original_query", user_message),
         },
+        as_node=_commit_as_node(prepared),
     )
 
 
@@ -868,14 +869,14 @@ def clear_thread_checkpoint(thread_id: str) -> None:
         asyncio.run(_clear(thread_id))
 
 
-def run_agent(
+async def run_agent(
     message: str,
     thread_id: str = "default",
     filters: dict | None = None,
 ) -> dict:
-    prepared = prepare_agent(message, thread_id=thread_id, filters=filters)
+    prepared = await prepare_agent(message, thread_id=thread_id, filters=filters)
     answer, tokens_used = _collect_stream(prepared)
-    commit_agent_state(thread_id, message, answer, prepared)
+    await commit_agent_state(thread_id, message, answer, prepared)
     state = prepared["state"]
     return {
         "answer": answer,
@@ -905,3 +906,15 @@ def _format_history(messages: list[BaseMessage]) -> str:
         content = m.content if isinstance(m.content, str) else str(m.content)
         lines.append(f"{role}：{content[:300]}")
     return "\n".join(lines)
+
+
+_COMMIT_AS_NODE: dict[str, str] = {
+    "rag": "generate_rag",
+    "tool_summary": "summarize_tools",
+    "chat": "chat",
+    "compound_synthesis": "merge_subtasks",
+}
+
+
+def _commit_as_node(prepared: PreparedAgent) -> str:
+    return _COMMIT_AS_NODE.get(prepared.get("mode", "chat"), "chat")

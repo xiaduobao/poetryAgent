@@ -18,7 +18,7 @@ try:
 except ImportError:
     _PROMETHEUS = False
 
-from app.agent.checkpoint import setup_checkpointer
+from app.agent.checkpoint import setup_checkpointer, shutdown_checkpointer
 from app.api.admin_routes import router as admin_router
 from app.api.corpus_routes import router as corpus_router
 from app.api.routes import router
@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     get_hybrid_retriever()
     logger.info("Hybrid retriever ready.")
     yield
+    await shutdown_checkpointer()
 
 
 def create_app() -> FastAPI:

@@ -118,5 +118,20 @@
     "input": "<user_input>\n【看图创作】\n用户要求：写一首七言绝句\n</user_input>",
     "is_compound": false,
     "expected_sub_queries": [{"intent": "tool_writing"}]
+  },
+  {
+    "input": "这首诗的创作背景是什么",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "rag"}]
+  },
+  {
+    "input": "《登高》的创作背景",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "rag"}]
+  },
+  {
+    "input": "作者创作背景是什么",
+    "is_compound": false,
+    "expected_sub_queries": [{"intent": "rag"}]
   }
 ]
