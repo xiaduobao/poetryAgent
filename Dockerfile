@@ -28,7 +28,7 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements-prod.txt .
 
 # 只从 PyTorch CPU 源安装；constraints 必须带 +cpu，否则第二步会从 PyPI 拉回 CUDA 版
 ARG TORCH_CPU_VERSION=2.5.1
@@ -37,7 +37,7 @@ RUN pip install --no-cache-dir \
     "torch==${TORCH_CPU_VERSION}+cpu"
 
 RUN echo "torch==${TORCH_CPU_VERSION}+cpu" > /tmp/constraints.txt \
-    && grep -v '^torch' requirements.txt > /tmp/requirements.no-torch.txt \
+    && grep -v '^torch' requirements-prod.txt > /tmp/requirements.no-torch.txt \
     && pip install --no-cache-dir -r /tmp/requirements.no-torch.txt -c /tmp/constraints.txt
 
 # 全部依赖装完后再校验（之前在校验后还 pip install，导致 nvidia 包混入）
@@ -46,7 +46,9 @@ RUN if pip list | grep -iE '^nvidia-'; then \
         pip list | grep -i nvidia; \
         exit 1; \
     fi \
-    && python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__; print('torch OK:', torch.__version__)"
+    && python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__; print('torch OK:', torch.__version__)" \
+    && find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/local/lib/python3.11/site-packages -type d \( -name tests -o -name test \) -prune -exec rm -rf {} + 2>/dev/null || true
 
 # ---- Backend runtime ----
 FROM ${PYTHON_IMAGE}

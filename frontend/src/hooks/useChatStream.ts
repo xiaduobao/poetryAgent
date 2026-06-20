@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react"
-import { resumeChatStream, streamChat } from "@/api/chat"
+import { resumeChatStream, streamChat, type StreamCallbacks } from "@/api/chat"
 import { api } from "@/api/client"
 import type { HitlInterrupt, Message, StreamPhase } from "@/types"
 
@@ -86,8 +86,8 @@ export function useChatStream() {
       pendingAssistantIdRef.current = assistantId
       pendingRetryRef.current = null
 
-      const streamCallbacks = {
-          onStatus: (p: StreamPhase) => setPhase(p),
+      const streamCallbacks: StreamCallbacks = {
+          onStatus: (p) => setPhase(p),
           onSources: (sources) => {
             setMessages((prev) =>
               prev.map((m) =>
@@ -198,7 +198,7 @@ export function useChatStream() {
       setStreaming(true)
       setPhase(action === "approve" ? "tooling" : "generating")
 
-      const handle = resumeChatStream(sessionId, action, {
+      const resumeCallbacks: StreamCallbacks = {
         onStatus: (p) => setPhase(p),
         onSources: (sources) => {
           setMessages((prev) =>
@@ -243,7 +243,9 @@ export function useChatStream() {
           setHitlLoading(false)
           setPhase("error")
         },
-      })
+      }
+
+      const handle = resumeChatStream(sessionId, action, resumeCallbacks)
 
       abortRef.current = handle.abort
       await handle.promise

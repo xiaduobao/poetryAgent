@@ -943,3 +943,92 @@ CORS_ORIGINS=https://cnpoetry.top,https://www.cnpoetry.top
 ```
 
 **标签**：`deploy` | `nginx` | `config`
+
+---
+
+## 2026-06-20 · ACR 云构建在 COPY backend-deps 阶段静默失败
+
+### 现象
+- ACR 控制台云构建日志停在类似位置，无后续 ERROR 行：
+  ```
+  #22 [stage-2 5/8] COPY --from=backend-deps /usr/local/bin /usr/local/bin
+  sha256:... 88.08MB / 576.67MB 16.7s
+  ```
+- 构建状态直接变为失败，日志里没有明确报错
+
+### 原因
+- `backend-deps` 阶段装完 PyTorch CPU + sentence-transformers 等后，`site-packages` 单层约 **500～600MB**
+- ACR **个人版**云构建 VM 内存/磁盘有限；BuildKit 在 `COPY --from=backend-deps` 跨阶段导出大 layer 时容易 **OOM（exit 137）** 或磁盘满，进程被系统 kill，控制台常只显示进度条截断、无详细错误
+- 前端 `frontend-build` 与 `stage-2` 并行，进一步占用构建资源
+
+### 解决方案（按推荐顺序）
+
+#### 方案 A：改在 ECS 上构建（最稳，推荐）
+ECS 内存 ≥ 4GB，与 ACR 同区域 push 快：
+```bash
+./scripts/deploy/build-on-ecs.sh
+./scripts/deploy/deploy.sh --pull
+```
+
+#### 方案 B：本地 Mac 构建后 push
+```bash
+./scripts/deploy/build-push-acr.sh
+./scripts/deploy/deploy.sh --pull
+```
+
+#### 方案 C：继续用 ACR 云构建时的优化
+1. **构建设置**：关闭「海外机器构建」；**不要**勾选「不使用缓存」
+2. **build-arg** 使用新加坡同区域基础镜像（比 DaoCloud 代理更稳）：
+   ```
+   NODE_IMAGE=registry.ap-southeast-1.aliyuncs.com/library/node:20-slim
+   PYTHON_IMAGE=registry.ap-southeast-1.aliyuncs.com/library/python:3.11-slim
+   ```
+3. Dockerfile 已用 `requirements-prod.txt`（不含 pytest/ruff 等开发包）并在装完后清理 `__pycache__`/tests，略减 layer 体积
+
+#### 方案 D：查看完整失败原因
+ACR 构建记录 → 日志页**拉到最底部**，常见隐藏信息：
+- `Killed` / `signal: killed` / `exit code 137` → 内存不足
+- `no space left on device` → 磁盘满
+- `timeout` / `context deadline exceeded` → 网络或推送超时
+
+### 状态
+- [x] Dockerfile 已优化（2026-06-20）
+- 若仍失败 → 改用方案 A（ECS build）
+
+---
+
+## 2026-06-20 · 前端 npm run build TS 隐式 any 导致 ACR 构建失败
+
+### 现象
+```
+src/hooks/useChatStream.ts(91,23): error TS7006: Parameter 'sources' implicitly has an 'any' type.
+src/hooks/useChatStream.ts(98,26): error TS7031: Binding element 'sub_intents' implicitly has an 'any' type.
+...
+error: failed to solve: process "/bin/sh -c npm run build" did not complete successfully: exit code: 2
+```
+
+### 原因
+- Docker 构建执行 `npm run build`（含 `tsc -b`），比本地 dev 更严格
+- `useChatStream.ts` 中 `streamCallbacks` 未标注类型，回调参数推断为 `any`
+- `onSubtasks` 解构 `{ sub_intents, is_compound }` 与 `StreamCallbacks` 定义不兼容（`is_compound` 应为可选）
+
+### 解决方案
+为回调对象显式标注 `StreamCallbacks` 类型（从 `@/api/chat` 导入）：
+
+```typescript
+import { streamChat, type StreamCallbacks } from "@/api/chat"
+
+const streamCallbacks: StreamCallbacks = {
+  onSources: (sources) => { ... },
+  onSubtasks: ({ sub_intents, is_compound }) => { ... },
+  // ...
+}
+```
+
+本地验证：
+```bash
+cd frontend && npm run build
+```
+
+### 状态
+- [x] 已修复（2026-06-20）
