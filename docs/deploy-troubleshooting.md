@@ -1032,3 +1032,55 @@ cd frontend && npm run build
 
 ### 状态
 - [x] 已修复（2026-06-20）
+
+---
+
+## 2026-06-22 · 从 ECS Postgres Docker 导出数据做本地测评
+
+**问**：生成指令，到 ECS 上从 postgres docker 导出数据，本地做测评。
+
+**答**：
+
+**库信息**：`poetry_agent`，用户 `poetry`，容器服务名 `postgres`，项目目录默认 `/opt/poetry-agent`。
+
+**1. ECS 上导出（推荐 custom 格式，体积小）**
+
+```bash
+cd /opt/poetry-agent
+mkdir -p backups
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  pg_dump -U poetry -Fc poetry_agent \
+  > backups/poetry_agent_$(date +%Y%m%d_%H%M).dump
+ls -lh backups/
+```
+
+**2. 本机一条命令拉取**（先 `source scripts/deploy/deploy.env`）
+
+```bash
+ssh -i "$SSH_KEY" -p "${ECS_PORT:-22}" "$ECS_USER@$ECS_HOST" \
+  "cd /opt/poetry-agent && docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U poetry -Fc poetry_agent" \
+  > backups/poetry_agent_prod_$(date +%Y%m%d).dump
+```
+
+**3. 仅导出测评相关表**（会话/消息，不含用户密码）
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U poetry -d poetry_agent \
+  -t sessions -t messages -t usage_records --data-only --inserts \
+  > backups/eval_chat_data.sql
+```
+
+**4. 本地恢复**
+
+```bash
+docker compose -f docker-compose.dev.yml up -d postgres
+docker compose -f docker-compose.dev.yml exec -T postgres \
+  pg_restore -U poetry -d poetry_agent --clean --if-exists < backups/poetry_agent_prod.dump
+# 或 SQL：docker compose -f docker-compose.dev.yml exec -T postgres psql -U poetry -d poetry_agent < backups/eval_chat_data.sql
+```
+
+本地 `.env`：`DATABASE_URL=postgresql://poetry:poetry@localhost:5432/poetry_agent`
+
+**注意**：RAG 离线测评（`eval_rag.py`）主要依赖 `data/chroma_db` + `data/corpus`，与 Postgres 无关；若要对齐生产检索效果，另用 `./scripts/deploy/deploy.sh --with-data` 同步向量库（不含 postgres/redis）。导出含 `users.password_hash`，勿提交 git。
+
+**标签**：`deploy` | `docker` | `config`

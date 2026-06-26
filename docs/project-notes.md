@@ -1284,3 +1284,237 @@ human_loop 介绍杜甫   → HITL 确认
 ```
 
 **标签**：`config` `other`
+
+---
+
+## 2026-06-20 · LangSmith Configure Evaluator 如何使用
+
+**问**：LangSmith「Configure Evaluator」界面（LLM-as-a-Judge / Code Evaluator / 模板）如何使用？
+
+**答**：先确保 `.env` 中 `LANGSMITH_TRACING=true` 且 API Key 有效，应用 Run 会进入 `LANGSMITH_PROJECT`。在 LangSmith UI：**Datasets** 创建数据集（可从 `tests/eval/rag_golden_set.json` 导入，字段 `inputs.query` / `outputs.reference`），进入 **Evaluate** → **Configure Evaluator** 选类型：RAG 质量用模板 **Correctness** 或 **Hallucination**；诗词领域自定义用 **LLM-as-a-Judge**；规则检查用 **Code Evaluator**。保存后对 Dataset 跑 **Run Evaluation**，在结果页看每条分数与失败样例。本地离线评估仍用 `scripts/eval_rag.py` / `eval_rag_ragas.py`（见 `docs/testing-and-evaluation.md`），与 LangSmith 在线 Evaluator 互补。
+
+**标签**：`other`
+
+---
+
+## 2026-06-22 · react_loop.py 职责：非意图识别，非最终回答
+
+**问**：`app/agent/react_loop.py` 只是做意图识别，还是会回答问题？
+
+**答**：两者都不是。意图识别在 `intent_classifier.py` / `graph.classify_intent`；最终面向用户的回答在 `stream_final_answer` / `generate_tool_summary`。
+
+`react_loop.py` 是**有限 ReAct 工具循环**：在意图已确定后，LLM 绑定工具 → 调用 → 观察 → 重复（最多 `react_max_steps` 轮），收集 `tool_result`、`rag_context`、`source_refs`。代码注释明确：**不在此节点生成最终自然语言回答**。
+
+触发场景（`graph._prepare_single_agent`）：
+1. 低置信度兜底：`should_react_fallback`（非 rule 命中且 confidence 低于阈值）
+2. 工具多轮：`should_use_react_tool_loop`（低置信度，或格律/查诗/典故且缺诗题需指代解析）
+
+ReAct 结束后 `mode=tool_summary`，由 `_build_stream_messages` 把工具/检索结果交给 LLM 整理成中文回答再流式输出。
+
+**标签**：`other`
+
+---
+
+## 2026-06-22 · RAG P0/P1 检索优化已落地
+
+**问**：p0 p1 优化
+
+**答**：已实现 `app/rag/retriever.py` 改造：
+
+**P0**：`profile=full|light` 场景化参数（light：k=4、skip_rerank）；向量+BM25 `ThreadPoolExecutor` 并行；`_rerank` 支持动态 `rerank_n`/`rerank_max_candidates`。轻量调用：`allusion.py`、`theme.py` 使用 `profile="light"`。
+
+**P1**：Chroma `where` metadata 预过滤；诗题《》`_metadata_shortcut`；RRF 融合替代简单拼接；jieba 分词（`requirements.txt` 新增 `jieba`）。
+
+```python
+# 鉴赏 / Agent RAG（默认 full）
+retriever.retrieve(query, author=author)
+
+# 典故 / 主题（light，跳过 rerank）
+retriever.retrieve(query, profile="light")
+```
+
+**标签**：`rag`
+
+---
+
+## 2026-06-22 · 向量检索优化空间梳理
+
+**问**：项目的向量查询有什么优化空间？
+
+**答**：当前链路为 Chroma 向量（BGE-small-zh, CPU）+ 内存 BM25 + BGE-Rerank 精排（`app/rag/retriever.py`），语料约 202 篇。主要瓶颈在 **Rerank CPU 推理**（可达 30～96s），向量查询 embedding 约数秒；BM25/合并毫秒级。
+
+**延迟（优先）**：
+1. 按场景传参：`retrieve(retrieval_k, rerank_n, skip_rerank)`，典故/主题等轻量路径可 k=4、skip_rerank
+2. 向量与 BM25 **并行**（当前串行）
+3. Rerank：GPU + fp16、ONNX/INT8 量化、更小模型（bge-reranker-v2-m3）
+4. Query embedding LRU 缓存；Chroma **metadata 预过滤**（author/dynasty）替代召回后过滤
+
+**召回质量**：
+1. BM25 换 jieba/专业中文分词（现为字+双字）
+2. RRF 分数融合替代简单合并去重
+3. 诗题/作者规则短路（`《》` 精确匹配）再走向量
+4. 分块：标题+正文分别 embedding 或多字段索引
+
+**工程**：增量建索引、去重键用 `source_file`、用 `eval_rag.py` / Ragas 量化改动。
+
+**优化路线图**：
+
+```mermaid
+flowchart TD
+    ROOT["当前瓶颈<br/>Rerank CPU 30～96s · 向量 embedding 1～3s · BM25 毫秒级"]
+
+    ROOT --> P0
+    ROOT --> P1
+
+    subgraph P0["P0 — 立刻见效 · 降延迟"]
+        direction TB
+        P0A["① 场景化 retrieve<br/>轻量路径 skip_rerank / k=4<br/>鉴赏保持 k=8 · rerank_n=4"]
+        P0B["② 向量 ∥ BM25 并行<br/>ThreadPool · 省 1～3s"]
+        P0C["③ Rerank 加速<br/>GPU+fp16 · INT8 · bge-reranker-v2-m3"]
+        P0A --> P0B --> P0C
+    end
+
+    subgraph P1["P1 — 中等改动 · 提召回"]
+        direction TB
+        P1A["Chroma where 预过滤<br/>author / dynasty / genre"]
+        P1B["诗题《》· 作者 metadata 短路"]
+        P1C["RRF 分数融合<br/>替代简单拼接去重"]
+        P1D["jieba BM25 分词<br/>替换字+双字切分"]
+        P1A --> P1B --> P1C --> P1D
+    end
+
+    subgraph P2["P2 — 长期 · 语料规模化"]
+        direction TB
+        P2A["标题 / 正文分字段 embedding"]
+        P2B["BM25 索引持久化 · 启动免重建"]
+        P2C["Chroma 增量 upsert"]
+        P2A --> P2B --> P2C
+    end
+
+    P0 --> P1 --> P2
+
+    P0C --> GOAL1["目标：单请求 3s 内 CPU · 1s 内 GPU"]
+    P1D --> GOAL2["目标：golden set 通过率提升"]
+```
+
+**标签**：`rag`
+
+---
+
+## 2026-06-22 · bm25_search 从哪儿查
+
+**问**：当前 `bm25_search` 查询逻辑从哪儿查询的？
+
+**答**：**不查 Chroma/数据库**，查的是 `HybridRetriever` 初始化时在**内存**里建的 BM25 索引。
+
+1. **语料来源**：`settings.corpus_dir`（默认 `data/corpus/`）下全部 `*.md` 诗词 Markdown
+2. **建索引**：`load_poetry_documents` → `split_with_overlap` → 对每块 `page_content` 用 jieba 分词（无 jieba 则字+双字）→ `BM25Okapi`
+3. **查询**（`app/rag/retriever.py` `_bm25_search`）：query 分词 → `get_scores` 全库打分 → 取 top-k 且 score>0
+4. **与向量检索区别**：向量走 Chroma；BM25 检索阶段**不做** author/dynasty/genre 预过滤，这些在 RRF 合并后才 `_match_filter`
+
+**标签**：`rag`
+
+---
+
+## 2026-06-22 · 语料很大时 BM25 占内存怎么办
+
+**问**：如果语料很多，BM25 占用内存很大有什么方案？
+
+**答**：当前 `HybridRetriever.__init__` 会同时驻留 **`corpus_docs` 全文** + **分词结果** + **`BM25Okapi` 倒排结构**，且与 Chroma 里的文本**重复一份**。202 篇可忽略；到万级 chunk 需改架构。
+
+**按投入由低到高**：
+
+1. **去重 + 懒加载正文（本仓库最易改）**  
+   内存只留 `doc_id`、metadata、分词 token；BM25 命中后再从 Chroma/磁盘按 id 取 `page_content`（Rerank 前再拉正文）。省掉最大头的全文 duplicate。
+
+2. **BM25 索引持久化（project-notes P2B）**  
+   建索引脚本 `pickle`/`joblib` 到 `data/bm25_index/`；启动 mmap 或 load，避免每次冷启动读盘+分词。**不降低峰值内存**，只缩短启动、便于增量 rebuild。
+
+3. **外置搜索引擎（语料 10 万+ 推荐）**  
+   Elasticsearch/OpenSearch（ik/jieba 分词）、Meilisearch、Tantivy；BM25 在磁盘+OS cache，应用进程几乎不持全文。与现有 Chroma 向量并行，RRF 逻辑不变。
+
+4. **复用已有 Postgres**  
+   `tsvector` + GIN 或 pg_trgm；语料入库时同步写 FTS 表。适合已跑 Postgres、不想再加 ES 的场景；中文需自定义分词或 trigram。
+
+5. **检索侧减载**  
+   metadata 预过滤（朝代/作者）后再 BM25；超大文档只索引「标题+名句+摘要」字段；或语料极大时 **`BM25_ENABLED=false`**，仅靠向量+Rerank（诗词场景 recall 可能略降）。
+
+6. **部署**  
+   检索独立进程/容器（更大 heap）；多 worker 时 **每进程一份 BM25** → 用外置引擎或单例检索 sidecar，避免 N 倍内存。
+
+**选型建议**：<5k chunk → 方案 1+2；5k～50k → 1+2+5；>50k → 3 或 4。
+
+**标签**：`rag`
+
+---
+
+## 2026-06-22 · slowapi 用的什么限流算法
+
+**问**：slowapi 用的什么限流算法？
+
+**答**：slowapi 本身不做计数，底层委托 Python **`limits`** 库（源自 Flask-Limiter）。默认策略是 **`fixed-window`（固定窗口）**：每个 key 在窗口内维护一个计数器，首请求起算窗口时长（如 `10/minute` → 60s），窗口到期计数清零；窗口边界可能出现短时 burst。
+
+可选 `strategy`（`Limiter(..., strategy=...)` 或环境变量 `RATELIMIT_STRATEGY`）：
+- `fixed-window` — 默认，内存最省
+- `moving-window` — 记录请求时间戳，最精确、内存开销大
+- `sliding-window-counter` — 双桶近似滑动窗口，精度与内存折中
+
+本仓库 `app/security/rate_limit.py` 未指定 strategy，即 **固定窗口**；存储为 Redis（`RATE_LIMIT_STORAGE_URI`）或进程内存。
+
+**标签**：`config`
+
+---
+
+## 2026-06-22 · 从生产 Postgres 导出抽取 Ragas 测评集
+
+**问**：已导出生产库，帮忙抽数据集做 Ragas 测评。
+
+**答**：
+
+1. **抽取脚本**：`python scripts/extract_ragas_dataset.py`（默认读 `backups/poetry_agent_20260622.sql`）
+2. **输出**：
+   - `tests/eval/rag_production_golden_set.json` — **23 条**高质量（独立问法、去重）
+   - `tests/eval/rag_production_golden_set_full.json` — **40 条**全量
+3. **字段**：`query` / `reference`（生产回答作参考答案）/ `response`（同 reference，全链路可直接评）/ `intent` / 可选 `author`
+4. **过滤**：仅 RAG 相关 intent（rag、tool_theme、tool_author 等）；排除上下文追问、王加宝测试、human_loop 等
+5. **跑 Ragas**：
+
+```bash
+# 检索质量（Context Recall）
+python scripts/eval_rag_ragas.py \
+  --golden tests/eval/rag_production_golden_set.json \
+  --retrieval-only --llm-model qwen-turbo \
+  --output reports/ragas_production.json
+
+# 全链路（Faithfulness 等，用生产回答 + 当前检索）
+python scripts/eval_rag_ragas.py \
+  --golden tests/eval/rag_production_golden_set.json \
+  --llm-model qwen-turbo --limit 5
+```
+
+**标签**：`rag` | `other`
+
+---
+
+## 2026-06-22 · 查询 Chroma 真实数据脚本
+
+**问**：编写脚本查询 chroma_db 真实数据，`include=["documents", "embeddings", "metadatas"]`。
+
+**答**：`scripts/inspect_chroma.py`，直连 `chromadb.PersistentClient`，默认 collection `poetry_corpus`。
+
+```bash
+# 库统计（条数、向量维度、metadata 字段、作者分布）
+python scripts/inspect_chroma.py --stats
+
+# 查前 3 条（默认 include=documents,embeddings,metadatas，embedding 只 preview 前 8 维）
+python scripts/inspect_chroma.py --limit 3
+
+# 导出完整 JSON（含全部 embedding）
+python scripts/inspect_chroma.py --limit 0 --output reports/chroma_full.json
+
+# 按 metadata 过滤 / 按 id 查
+python scripts/inspect_chroma.py --where '{"author":"杜甫"}' --limit 5
+python scripts/inspect_chroma.py --id <chunk_id>
+```
+
+**标签**：`rag`

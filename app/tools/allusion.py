@@ -75,7 +75,7 @@ def explain_allusion(query: str) -> dict[str, Any]:
     if not matches:
         try:
             retriever = get_hybrid_retriever()
-            docs = retriever.retrieve(query)[:3]
+            docs = retriever.retrieve(query, profile="light")[:3]
             for doc in docs:
                 poem = parse_poem_doc(doc)
                 poem_matches = _search_notes(query, poem)

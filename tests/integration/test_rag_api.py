@@ -30,12 +30,11 @@ async def test_rag_endpoint_returns_documents(mock_get, client, auth_headers):
     assert "春眠" in body["documents"][0]["content"]
 
 
-def test_hybrid_retriever_merge_dedup():
-    from app.rag.retriever import HybridRetriever
+def test_hybrid_retriever_rrf_dedup():
+    from app.rag.retriever import _rrf_merge
 
-    retriever = object.__new__(HybridRetriever)
-    d1 = Document(page_content="相同内容" + "a" * 200, metadata={})
-    d2 = Document(page_content="相同内容" + "a" * 200, metadata={})
-    d3 = Document(page_content="不同内容", metadata={})
-    merged = retriever._merge_docs([d1], [d2, d3])
+    d1 = Document(page_content="相同内容" + "a" * 200, metadata={"source_file": "same.md"})
+    d2 = Document(page_content="相同内容" + "a" * 200, metadata={"source_file": "same.md"})
+    d3 = Document(page_content="不同内容", metadata={"source_file": "other.md"})
+    merged = _rrf_merge([d1], [d2, d3])
     assert len(merged) == 2

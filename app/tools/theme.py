@@ -92,7 +92,7 @@ def recommend_by_theme(theme: str, limit: int = 5) -> dict[str, Any]:
     if not recommendations:
         try:
             retriever = get_hybrid_retriever()
-            docs = retriever.retrieve(theme)[:6]
+            docs = retriever.retrieve(theme, profile="light")[:6]
             for doc in docs:
                 poem = parse_poem_doc(doc)
                 title = poem.get("title", "")
